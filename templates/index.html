@@ -1,0 +1,1600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SRI TRADERS - GST Billing & Saved Bills</title>
+<link rel="icon" href="{{ url_for('static', filename='icon.jpeg') }}" type="image/jpeg">
+<style>
+body {
+    background: #eef2f5;
+    margin: 0;
+    padding: 0;
+    padding-top: 60px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* ===== THERMAL RECEIPT ===== */
+#a4 {
+    position: relative;
+    background: white;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+
+/* 80mm thermal receipt — auto height */
+.a4-portrait {
+    width: 302px; /* ~80mm */
+    min-height: 200px;
+    height: auto;
+    padding: 8px 6px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+}
+
+.a4-landscape {
+    width: 302px;
+    height: auto;
+    padding: 8px 6px;
+}
+
+/* ===== MAIN LAYOUT TABLE ===== */
+.invoice-table {
+    width: 100%;
+    height: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.invoice-table td {
+    padding: 0;
+    border: none;
+    vertical-align: top;
+}
+
+.invoice-table tr:first-child {
+    height: auto;
+}
+
+.invoice-table tr:last-child {
+    height: 100%;
+}
+
+/* ===== TOP TABLE ===== */
+.top-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.top-table td {
+    border: 1px solid black;
+    padding: 6px 10px;
+    vertical-align: top;
+    font-size: 11px;
+}
+
+/* ===== BODY TABLE ===== */
+.body-table {
+    width: 100%;
+    height: 100%;
+    border: 1px solid black;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 11px;
+}
+
+.body-table th,
+.body-table td {
+    border-left: 1px solid black;
+    border-right: 1px solid black;
+}
+
+.body-table thead th {
+    border-bottom: 1px solid black;
+    font-size: 11px;
+    padding: 6px 4px;
+    background-color: #f8f9fa;
+}
+
+.body-table tbody td {
+    font-size: 11px;
+    border-top: none;
+    border-bottom: none;
+    padding: 6px 4px;
+}
+
+.body-table tfoot td {
+    font-size: 11px;
+    border-top: 1px solid black;
+    padding: 6px;
+}
+
+/* Editable cells */
+[contenteditable="true"] {
+    outline: none;
+}
+
+#editor-toolbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    padding: 8px 15px;
+    display: flex;
+    gap: 8px;
+    z-index: 1000;
+    border-bottom: 1px solid #d0d7de;
+    align-items: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.selected-row td {
+    background-color: #e5fcff !important;
+}
+
+.active-cell {
+    outline: 2px solid #009c05;
+    outline-offset: -2px;
+}
+
+.calc-cell {
+    white-space: normal !important;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.primary-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.primary-btn:hover {
+    background: #0056b3;
+}
+
+.save-btn {
+    background: #28a745 !important;
+    font-size: 13px !important;
+    padding: 7px 15px !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+}
+
+.save-btn:hover {
+    background: #218838 !important;
+}
+
+.app-layout {
+    display: flex;
+    flex-direction: row;
+    gap: 15px;
+    padding: 15px;
+    box-sizing: border-box;
+    min-height: calc(100vh - 60px);
+}
+
+.sidebar {
+    background: #ffffff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    height: calc(100vh - 90px);
+    overflow-y: auto;
+    width: 300px;
+    min-width: 300px;
+    padding: 12px;
+    box-sizing: border-box;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.sidebar h3 {
+    margin-top: 0;
+    font-size: 15px;
+    color: #333;
+}
+
+/* ===== PRODUCT SELECTION PANEL ===== */
+.pos-panel {
+    width: 260px;
+    min-width: 260px;
+    background: #ffffff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    align-self: flex-start;
+    position: sticky;
+    top: 75px;
+    box-sizing: border-box;
+}
+
+.pos-panel h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #005703;
+    font-size: 15px;
+    border-bottom: 2px solid #005703;
+    padding-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pos-field {
+    margin-bottom: 14px;
+    position: relative;
+}
+
+.pos-field label {
+    display: block;
+    font-weight: bold;
+    font-size: 12px;
+    margin-bottom: 5px;
+    color: #444;
+}
+
+.pos-input {
+    width: 100%;
+    padding: 9px 10px;
+    font-size: 13px;
+    border: 1px solid #bbb;
+    border-radius: 5px;
+    box-sizing: border-box;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.pos-input:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+}
+
+.pos-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border: 1px solid #007bff;
+    border-radius: 0 0 6px 6px;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1050;
+    display: none;
+}
+
+.pos-dropdown-item {
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #222;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}
+
+.pos-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.pos-dropdown-item:hover,
+.pos-dropdown-item.active {
+    background: #007bff;
+    color: #fff;
+}
+
+.pos-add-btn {
+    width: 100%;
+    background: #28a745;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+    transition: background 0.2s, transform 0.1s;
+}
+
+.pos-add-btn:hover {
+    background: #218838;
+}
+
+.pos-add-btn:active {
+    transform: scale(0.98);
+}
+
+.editor {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.editing-banner {
+    width: 302px;
+    background: #fff3cd;
+    border: 1px solid #ffeba2;
+    color: #856404;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: bold;
+    display: none;
+    justify-content: space-between;
+    align-items: center;
+    box-sizing: border-box;
+}
+
+.date-header {
+    font-size: 11px;
+    font-weight: bold;
+    color: #666;
+    margin-top: 10px;
+    margin-bottom: 6px;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+@media print {
+    body {
+        background: none;
+        margin: 0;
+        padding: 0;
+    }
+    #editor-toolbar, .sidebar, .pos-panel, .no-print, .editing-banner {
+        display: none !important;
+    }
+    .app-layout {
+        display: block;
+        padding: 0;
+    }
+    .editor {
+        display: block;
+        padding: 0;
+        align-items: flex-start;
+    }
+    #a4 {
+        margin: 0;
+        box-shadow: none;
+        width: 80mm;
+        padding: 4px 4px;
+        font-size: 11px;
+    }
+    button {
+        display: none !important;
+    }
+    .receipt-divider {
+        border: none;
+        border-top: 1px dashed #000;
+        margin: 4px 0;
+    }
+    .receipt-eq-divider {
+        border: none;
+        border-top: 2px solid #000;
+        margin: 4px 0;
+    }
+}
+</style>
+</head>
+
+<body>
+<div id="editor-toolbar">
+    <div style="font-family:Brush Script MT;font-weight: 800;font-size: x-large;margin-right: 15px;color: #005703;">Sri Traders</div>
+    <select onchange="formatText('fontName', this.value)">
+            <option value="Arial" style="font-family:Arial">Arial</option>
+            <option value="Arial Black" style="font-family:Arial Black">Arial Black</option>
+            <option value="Verdana" style="font-family:Verdana">Verdana</option>
+            <option value="Tahoma" style="font-family:Tahoma">Tahoma</option>
+            <option value="Trebuchet MS" style="font-family:Trebuchet MS">Trebuchet MS</option>
+            <option value="Times New Roman" style="font-family:Times New Roman">Times New Roman</option>
+            <option value="Georgia" style="font-family:Georgia">Georgia</option>
+            <option value="Garamond" style="font-family:Garamond">Garamond</option>
+            <option value="Courier New" style="font-family:Courier New">Courier New</option>
+            <option value="Brush Script MT" style="font-family:Brush Script MT">Brush Script MT</option>
+            <option value="Segoe UI" style="font-family:Segoe UI">Segoe UI</option>
+            <option value="Calibri" style="font-family:Calibri">Calibri</option>
+            <option value="Roboto" style="font-family:Roboto">Roboto</option>
+            <option value="Poppins" style="font-family:Poppins">Poppins</option>
+    </select>
+
+    <select onchange="setFontSize(this.value)">
+            <option value="10px">10</option>
+            <option value="11px">11</option>
+            <option value="12px">12</option>
+            <option value="14px">14</option>
+            <option value="16px">16</option>
+            <option value="18px">18</option>
+            <option value="20px">20</option>
+            <option value="24px">24</option>
+    </select>
+
+    <button onclick="formatText('bold')"><b>B</b></button>
+    <button onclick="formatText('italic')"><i>I</i></button>
+    <button onclick="formatText('underline')"><u>U</u></button>
+
+    <input type="color" id="colorPicker">
+    
+    <button onclick="saveData()" class="primary-btn save-btn" id="save-btn">💾 Save Bill</button>
+    <button onclick="printPage()" class="primary-btn">🖨️ Print</button>
+    <button onclick="removeSelectedRow()" class="primary-btn" style="background: #dc3545;">🗑️ Remove Item</button>
+
+    <button onclick="newBillWithAutoNumber()" class="primary-btn" style="background-color: #17a2b8;">➕ New Bill</button>
+    <button onclick="window.location.href='/inventory'" class="primary-btn" style="margin-left: auto;">Inventory Management</button>
+</div>
+
+<div class="app-layout">
+    <!-- SAVED BILLS HISTORY SIDEBAR -->
+    <div class="sidebar">
+        <h3 style="margin-top: 0; margin-bottom: 10px; color: #333; font-size: 15px; border-bottom: 2px solid #007bff; padding-bottom: 6px;">Saved Bills History</h3>
+        <input 
+            type="text"
+            id="invoiceSearch"
+            placeholder="Search by Bill No, Customer, Date..."
+            style="width: 100%; margin-bottom: 12px; padding: 7px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 5px; font-size: 12px;"
+            oninput="searchInvoices()">
+        <div id="invoice-list"></div>
+    </div>
+
+    <!-- LEFT SIDE PRODUCT SELECTION PANEL -->
+    <div class="pos-panel" id="pos-panel-container">
+        <h3>⚡ Product Selection</h3>
+        
+        <div class="pos-field">
+            <label for="posProductSearch">Product</label>
+            <input 
+                type="text" 
+                id="posProductSearch" 
+                class="pos-input" 
+                placeholder="Type product name..." 
+                autocomplete="off">
+            <div id="posProductDropdown" class="pos-dropdown"></div>
+        </div>
+
+        <div class="pos-field">
+            <label for="posQtyInput">Quantity</label>
+            <input 
+                type="number" 
+                id="posQtyInput" 
+                class="pos-input" 
+                value="1" 
+                min="1">
+        </div>
+
+        <div class="pos-field">
+            <label for="posCashierInput">Cashier Name</label>
+            <input 
+                type="text" 
+                id="posCashierInput" 
+                class="pos-input" 
+                placeholder="e.g. Hari"
+                oninput="updateCashierOnReceipt(this.value)">
+        </div>
+
+        <button type="button" id="posAddBtn" onclick="addProductToBillFromPanel()" class="pos-add-btn">
+            ➕ ADD
+        </button>
+
+        <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee;">
+            <button type="button" onclick="removeSelectedRow()" style="width: 100%; background: #fff0f0; color: #dc3545; border: 1px solid #dc3545; border-radius: 5px; padding: 8px; font-size: 12px; font-weight: bold; cursor: pointer;">
+                🗑️ Remove Selected Item
+            </button>
+        </div>
+    </div>
+
+    <!-- RIGHT SIDE BILL TABLE / A4 EDITOR -->
+    <div class="editor">
+        <div id="editing-banner" class="editing-banner">
+            <span id="editing-banner-text">✏️ Editing Saved Bill: <b id="editing-bill-name"></b></span>
+            <div>
+                <button id="mode-toggle-btn" onclick="toggleEditMode()" style="background: #007bff; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; margin-right: 5px;">Edit Bill</button>
+                <button onclick="newBillWithAutoNumber()" style="background: none; border: none; cursor: pointer; color: #856404; font-weight: bold; font-size: 12px;">[New Bill]</button>
+            </div>
+        </div>
+        <div id="a4" class="a4-portrait">
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='module.js') }}"></script>
+<script>
+let currentInvoiceId = null;
+let currentFileName = null;
+let isReadOnly = false;
+
+let activeCell = null;
+let savedSelection = null;
+window.inventoryProducts = [];
+let highlightedIndex = -1;
+
+document.addEventListener("selectionchange", function () {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    savedSelection = sel.getRangeAt(0);
+
+    if (activeCell) {
+        formatInvoiceCells(activeCell);
+    }
+});
+
+const colorPicker = document.getElementById("colorPicker");
+if (colorPicker) {
+    colorPicker.addEventListener("input", function () {
+        if (!savedSelection) return;
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(savedSelection);
+        document.execCommand("styleWithCSS", false, true);
+        document.execCommand("foreColor", false, this.value);
+    });
+}
+
+function formattedDate(){
+    const today = new Date();
+    const day = String(today.getDate()).padStart(2, '0');
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const year = today.getFullYear();
+    return `${day}/${month}/${year}`;
+}
+
+function formattedTime(){
+    const today = new Date();
+    return today.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+document.addEventListener("DOMContentLoaded", async function () {
+    await loadProductNames();
+    const nextBillNo = await getNextBillNumber();
+    loadNewInvoice(nextBillNo);   // load blank invoice on page load
+    loadInvoiceList();
+    setupPosEvents();
+});
+
+// Returns the next sequential bill number based on saved invoice count
+async function getNextBillNumber() {
+    try {
+        const res = await fetch("/get-invoices");
+        const invoices = await res.json();
+        return invoices.length + 1;
+    } catch(e) {
+        return 1;
+    }
+}
+
+// Updates the Cashier field on the receipt in real-time as user types
+function updateCashierOnReceipt(name) {
+    const cashierEl = document.getElementById("receiptCashier");
+    if (cashierEl) cashierEl.innerText = name || "";
+}
+
+// Load inventory product details for billing selection & rate/stock validation
+async function loadProductNames() {
+    try {
+        const res = await fetch("/get-product-names");
+        window.inventoryProducts = await res.json();
+    } catch(err) {
+        console.error("Error loading inventory product names:", err);
+    }
+}
+
+// Helper to escape HTML characters
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+/* =======================================
+   POS PRODUCT SELECTION & FAST BILLING
+   ======================================= */
+
+function setupPosEvents() {
+    const searchInput = document.getElementById("posProductSearch");
+    const qtyInput = document.getElementById("posQtyInput");
+
+    if (searchInput) {
+        searchInput.addEventListener("input", function() {
+            const query = this.value.trim().toLowerCase();
+            if (!query) {
+                closePosDropdown();
+                return;
+            }
+
+            const matches = (window.inventoryProducts || []).filter(p =>
+                p.name.toLowerCase().includes(query)
+            );
+
+            highlightedIndex = matches.length > 0 ? 0 : -1;
+            renderPosDropdown(matches);
+        });
+
+        searchInput.addEventListener("keydown", function(e) {
+            const dropdown = document.getElementById("posProductDropdown");
+            const items = dropdown.querySelectorAll(".pos-dropdown-item");
+
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (items.length > 0) {
+                    highlightedIndex = (highlightedIndex + 1) % items.length;
+                    updateHighlight(items);
+                }
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                if (items.length > 0) {
+                    highlightedIndex = (highlightedIndex - 1 + items.length) % items.length;
+                    updateHighlight(items);
+                }
+            } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (highlightedIndex >= 0 && items[highlightedIndex]) {
+                    selectPosProduct(items[highlightedIndex].dataset.productName);
+                } else if (items.length > 0) {
+                    selectPosProduct(items[0].dataset.productName);
+                } else if (searchInput.value.trim()) {
+                    qtyInput.focus();
+                    qtyInput.select();
+                }
+            } else if (e.key === "Escape") {
+                closePosDropdown();
+            }
+        });
+
+        searchInput.addEventListener("blur", function() {
+            setTimeout(closePosDropdown, 200);
+        });
+    }
+
+    if (qtyInput) {
+        qtyInput.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                addProductToBillFromPanel();
+            }
+        });
+    }
+}
+
+function renderPosDropdown(matches) {
+    const dropdown = document.getElementById("posProductDropdown");
+    dropdown.innerHTML = "";
+
+    if (!matches || matches.length === 0) {
+        dropdown.style.display = "none";
+        highlightedIndex = -1;
+        return;
+    }
+
+    matches.forEach((p, idx) => {
+        const item = document.createElement("div");
+        item.className = "pos-dropdown-item" + (idx === highlightedIndex ? " active" : "");
+        item.innerText = p.name;
+        item.dataset.productName = p.name;
+        item.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            selectPosProduct(p.name);
+        });
+        dropdown.appendChild(item);
+    });
+
+    dropdown.style.display = "block";
+}
+
+function updateHighlight(items) {
+    items.forEach((item, idx) => {
+        if (idx === highlightedIndex) {
+            item.classList.add("active");
+            item.scrollIntoView({ block: "nearest" });
+        } else {
+            item.classList.remove("active");
+        }
+    });
+}
+
+function selectPosProduct(name) {
+    const searchInput = document.getElementById("posProductSearch");
+    searchInput.value = name;
+    closePosDropdown();
+    const qtyInput = document.getElementById("posQtyInput");
+    if (qtyInput) {
+        qtyInput.focus();
+        qtyInput.select();
+    }
+}
+
+function closePosDropdown() {
+    const dropdown = document.getElementById("posProductDropdown");
+    if (dropdown) dropdown.style.display = "none";
+    highlightedIndex = -1;
+}
+
+// Validate product against available stock in inventory
+function validateAndGetProduct(productName, reqQty, currentRowElem = null) {
+    if (!productName || !productName.trim()) {
+        alert("Please select a product from inventory.");
+        return null;
+    }
+
+    const matched = (window.inventoryProducts || []).find(
+        p => p.name.toLowerCase() === productName.trim().toLowerCase()
+    );
+
+    if (!matched) {
+        // If not in inventory (manual item name), return mock item
+        return { name: productName, available_qty: 999999, unit_price: 0 };
+    }
+
+    const availableStock = parseInt(matched.available_qty) || 0;
+
+    let existingInBill = 0;
+    const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
+    rows.forEach(r => {
+        if (r === currentRowElem) return;
+        const nameCell = r.querySelector('[data-field="product_name"]');
+        const qtyCell = r.querySelector('[data-field="quantity"]');
+        if (nameCell && qtyCell) {
+            const pName = nameCell.innerText.trim();
+            if (pName.toLowerCase() === matched.name.toLowerCase()) {
+                existingInBill += parseInt(qtyCell.innerText) || 0;
+            }
+        }
+    });
+
+    const totalNeeded = existingInBill + reqQty;
+
+    if (totalNeeded > availableStock) {
+        alert(`Only ${availableStock} units of ${matched.name} are available in stock.`);
+        return null;
+    }
+
+    return matched;
+}
+
+function addProductToBillFromPanel() {
+    if (isReadOnly) {
+        alert("Bill is currently in View mode. Click Edit to make changes.");
+        return;
+    }
+
+    const searchInput = document.getElementById("posProductSearch");
+    const qtyInput = document.getElementById("posQtyInput");
+
+    const productName = searchInput.value.trim();
+    const reqQty = parseInt(qtyInput.value) || 0;
+
+    if (reqQty <= 0) {
+        alert("Please enter a valid quantity.");
+        qtyInput.focus();
+        return;
+    }
+
+    const matched = validateAndGetProduct(productName, reqQty);
+    if (!matched) {
+        return;
+    }
+
+    const tbody = document.getElementById("invoice-body");
+    const fillerRow = document.getElementById("filler-row");
+    const rows = tbody.querySelectorAll("tr:not(#filler-row)");
+
+    let existingRow = null;
+    rows.forEach(r => {
+        const nameCell = r.querySelector('[data-field="product_name"]');
+        if (nameCell && nameCell.innerText.trim().toLowerCase() === matched.name.toLowerCase()) {
+            existingRow = r;
+        }
+    });
+
+    const unitPrice = parseFloat(matched.unit_price) || 0;
+
+    if (existingRow) {
+        const qtyCell = existingRow.querySelector('[data-field="quantity"]');
+        const currentQty = parseInt(qtyCell.innerText) || 0;
+        const newQty = currentQty + reqQty;
+        qtyCell.innerText = newQty;
+        calculateRow(existingRow);
+    } else {
+        // Create new clean 5-column row (No trash icons in table!)
+        const newRow = document.createElement("tr");
+
+        const subtotal = reqQty * unitPrice;
+        const gstAmount = subtotal * 0.05;
+        const totalAmount = subtotal + gstAmount;
+
+        newRow.innerHTML = `
+            <td contenteditable="true" data-field="product_name" oninput="onProductNameEdited(this)" style="font-weight:bold; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace; word-break:break-word;">${escapeHtml(matched.name)}</td>
+            <td contenteditable="true" data-field="quantity" oninput="onQtyCellEdited(this)" style="font-weight:bold; text-align:center; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${reqQty}</td>
+            <td contenteditable="true" data-field="rate" oninput="onRateCellEdited(this)" style="font-weight:bold; text-align:right; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${unitPrice.toFixed(2)}</td>
+            <td data-field="gst" style="font-weight:bold; text-align:center; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">5%</td>
+            <td data-field="amount" class="calc-cell" style="font-weight:bold; text-align:right; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${totalAmount.toFixed(2)}</td>
+        `;
+
+        if (fillerRow) {
+            tbody.insertBefore(newRow, fillerRow);
+        } else {
+            tbody.appendChild(newRow);
+        }
+        calculateRow(newRow);
+    }
+
+    calculateGst();
+    calculateGrandTotal();
+
+    // Reset POS input fields & return cursor immediately to product search box
+    searchInput.value = "";
+    qtyInput.value = "1";
+    closePosDropdown();
+    searchInput.focus();
+}
+
+function onProductNameEdited(cell) {
+    const row = cell.closest("tr");
+    if (!row || row.id === "filler-row") return;
+
+    const typedName = cell.innerText.trim();
+    if (!typedName) return;
+
+    const matched = (window.inventoryProducts || []).find(
+        p => p.name.toLowerCase() === typedName.toLowerCase()
+    );
+
+    if (matched && matched.unit_price !== null && matched.unit_price !== undefined) {
+        const rateCell = row.querySelector('[data-field="rate"]');
+        if (rateCell) {
+            rateCell.innerText = parseFloat(matched.unit_price).toFixed(2);
+        }
+    }
+
+    calculateRow(row);
+    calculateGst();
+    calculateGrandTotal();
+}
+
+function onQtyCellEdited(cell) {
+    const row = cell.closest("tr");
+    if (!row || row.id === "filler-row") return;
+
+    const nameCell = row.querySelector('[data-field="product_name"]');
+    const productName = nameCell ? nameCell.innerText.trim() : "";
+    const newQty = parseInt(cell.innerText) || 0;
+
+    if (newQty <= 0) {
+        cell.innerText = "1";
+    }
+
+    const matched = validateAndGetProduct(productName, parseInt(cell.innerText) || 1, row);
+    if (!matched) {
+        cell.innerText = cell.dataset.lastValidQty || "1";
+    } else {
+        cell.dataset.lastValidQty = cell.innerText;
+    }
+
+    calculateRow(row);
+    calculateGst();
+    calculateGrandTotal();
+}
+
+function onRateCellEdited(cell) {
+    const row = cell.closest("tr");
+    if (!row || row.id === "filler-row") return;
+
+    calculateRow(row);
+    calculateGst();
+    calculateGrandTotal();
+}
+
+function removeSelectedRow() {
+    const selected = document.querySelector("#invoice-body tr.selected-row");
+    if (!selected || selected.id === "filler-row") {
+        alert("Please click on a row in the bill table to select it first.");
+        return;
+    }
+
+    selected.remove();
+    calculateGst();
+    calculateGrandTotal();
+}
+
+function calculateRow(row) {
+    const qtyCell = row.querySelector('[data-field="quantity"]');
+    const rateCell = row.querySelector('[data-field="rate"]');
+    const amountCell = row.querySelector('[data-field="amount"]');
+
+    if (!qtyCell || !rateCell || !amountCell) return;
+
+    const qty = parseFloat(qtyCell.innerText) || 0;
+    const rate = parseFloat(rateCell.innerText) || 0;
+
+    const subtotal = qty * rate;
+    const gstAmount = subtotal * 0.05;
+    const totalAmount = subtotal + gstAmount;
+
+    amountCell.innerText = totalAmount.toFixed(2);
+}
+
+document.addEventListener("input", function(e) {
+    const cell = e.target.closest("#invoice-body td[contenteditable='true']");
+    if (!cell) return;
+
+    const row = cell.closest("tr");
+    if (!row || row.id === "filler-row") return;
+
+    calculateRow(row);
+    calculateGst();
+    calculateGrandTotal();
+    formatInvoiceCells(cell);
+});
+
+document.addEventListener("blur", e => {
+    const cell = e.target.closest("#invoice-body td[contenteditable='true']");
+    if (!cell) return;
+    activeCell = null;
+    formatInvoiceCells();
+}, true);
+
+function calculateGst() {
+    const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
+    let totalTaxable = 0;
+    let totalTax = 0;
+
+    rows.forEach(row => {
+        const qtyCell = row.querySelector('[data-field="quantity"]');
+        const rateCell = row.querySelector('[data-field="rate"]');
+
+        const qty = parseFloat(qtyCell ? qtyCell.innerText : 0) || 0;
+        const rate = parseFloat(rateCell ? rateCell.innerText : 0) || 0;
+
+        const subtotal = qty * rate;
+        const gstAmount = subtotal * 0.05;
+
+        totalTaxable += subtotal;
+        totalTax += gstAmount;
+    });
+
+    const hiddenSgst = document.getElementById("hidden-sgst");
+    const hiddenCgst = document.getElementById("hidden-cgst");
+    const hiddenTotTax = document.getElementById("hidden-tot-tax");
+
+    if (hiddenSgst) hiddenSgst.innerText = (totalTax / 2).toFixed(2);
+    if (hiddenCgst) hiddenCgst.innerText = (totalTax / 2).toFixed(2);
+    if (hiddenTotTax) hiddenTotTax.innerText = totalTax.toFixed(2);
+}
+
+function calculateGrandTotal() {
+    let totals = {
+        quantity: 0,
+        amount: 0,
+        gstTotal: 0,
+        itemsCount: 0
+    };
+
+    const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
+    totals.itemsCount = rows.length;
+
+    rows.forEach(row => {
+        const qtyCell = row.querySelector('[data-field="quantity"]');
+        const rateCell = row.querySelector('[data-field="rate"]');
+
+        const qty = parseFloat(qtyCell ? qtyCell.innerText : 0) || 0;
+        const rate = parseFloat(rateCell ? rateCell.innerText : 0) || 0;
+
+        const subtotal = qty * rate;
+        const gstAmount = subtotal * 0.05;
+        const lineAmount = subtotal + gstAmount;
+
+        totals.quantity += qty;
+        totals.gstTotal += gstAmount;
+        totals.amount += lineAmount;
+    });
+
+    const totalItemsDisplay = document.getElementById("total-items-display");
+    const totalQuantityDisplay = document.getElementById("total-quantity-display");
+    const gstTotalDisplay = document.getElementById("gst-total-display");
+    const grandAmountDisplay = document.getElementById("grand-amount");
+
+    if (totalItemsDisplay) totalItemsDisplay.innerText = totals.itemsCount;
+    if (totalQuantityDisplay) totalQuantityDisplay.innerText = totals.quantity;
+    if (gstTotalDisplay) gstTotalDisplay.innerText = "₹ " + totals.gstTotal.toFixed(2);
+    if (grandAmountDisplay) grandAmountDisplay.innerText = "₹ " + totals.amount.toFixed(2);
+}
+
+let currentRow = null;
+document.addEventListener("click", function (e) {
+    const row = e.target.closest("#invoice-body tr");
+    if (!row || row.id === "filler-row") return;
+    document.querySelectorAll("#invoice-body tr").forEach(r => r.classList.remove("selected-row"));
+    row.classList.add("selected-row");
+});
+
+document.addEventListener("click", function (e) {
+    const cell = e.target.closest("#invoice-body td[contenteditable='true']");
+    if (!cell) return;
+    document.querySelectorAll(".active-cell").forEach(td => td.classList.remove("active-cell"));
+    cell.classList.add("active-cell");
+});
+
+document.addEventListener("click", function (e) {
+    if (!e.target.closest("#invoice-body")) {
+        document.querySelectorAll(".active-cell").forEach(td => td.classList.remove("active-cell"));
+    }
+});
+
+document.addEventListener("focusin", function (e) {
+    const cell = e.target.closest("#invoice-body td[contenteditable='true']");
+    if (!cell) return;
+
+    activeCell = cell;
+    const row = cell.closest("tr");
+    if (!row || row.id === "filler-row") return;
+
+    currentRow = row;
+    document.querySelectorAll("#invoice-body tr").forEach(r => r.classList.remove("selected-row"));
+    document.querySelectorAll(".active-cell").forEach(td => td.classList.remove("active-cell"));
+
+    row.classList.add("selected-row");
+    cell.classList.add("active-cell");
+});
+
+function formatText(command, value = null) {
+    if (value) {
+        document.execCommand(command, false, value);
+    } else {
+        document.execCommand(command, false, null);
+    }
+}
+
+function setFontSize(size) {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || selection.isCollapsed) return;
+
+    const range = selection.getRangeAt(0);
+    const span = document.createElement("span");
+    span.style.fontSize = size;
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+
+    selection.removeAllRanges();
+    const newRange = document.createRange();
+    newRange.selectNodeContents(span);
+    selection.addRange(newRange);
+}
+
+function formatInvoiceCells(excludeCell = null) {
+    document.querySelectorAll("#invoice-body td[contenteditable='true']").forEach(cell => {
+        if (excludeCell && cell === excludeCell) return;
+        const field = cell.dataset.field;
+        if (!field) return;
+
+        let raw = cell.innerText.trim();
+        if (!raw) return;
+
+        if (field === "rate") {
+            let num = parseFloat(raw.replace(/[^\d.]/g, "")) || 0;
+            cell.innerText = num.toFixed(2);
+            return;
+        }
+    });
+}
+
+async function generatePDFBlob() {
+    const element = document.getElementById("a4");
+    const opt = {
+        margin: 0,
+        filename: "Receipt.pdf",
+        image: { type: "jpeg", quality: 1 },
+        html2canvas: { scale: 3, scrollY: 0, useCORS: true },
+        jsPDF: { unit: "mm", format: [80, element.scrollHeight * 0.264583], orientation: "portrait" }
+    };
+
+    try {
+        const blob = await html2pdf().set(opt).from(element).outputPdf("blob");
+        return blob;
+    } catch (err) {
+        console.error("PDF generation failed:", err);
+        alert("PDF generation failed");
+        return null;
+    }
+}
+
+async function printPage() {
+    const blob = await generatePDFBlob();
+    if (!blob) return;
+
+    const formData = new FormData();
+    formData.append("file", blob, "invoice.pdf");
+
+    const response = await fetch("/pdf-action", {
+        method: "POST",
+        body: formData
+    });
+
+    const pdfBlob = await response.blob();
+    const url = URL.createObjectURL(pdfBlob);
+    const iframe = document.createElement("iframe");
+
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.src = url;
+
+    document.body.appendChild(iframe);
+    iframe.onload = function () {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+    };
+}
+
+async function saveData() {
+    await loadProductNames();
+
+    const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
+    const billItems = [];
+    const billQtyMap = {};
+
+    for (let row of rows) {
+        const nameCell = row.querySelector('[data-field="product_name"]');
+        const selectElem = row.querySelector('select[data-field="product_name"]');
+        
+        let productName = "";
+        if (nameCell) {
+            productName = nameCell.innerText.trim();
+        } else if (selectElem) {
+            productName = selectElem.value.trim();
+        }
+
+        const qtyCell = row.querySelector('[data-field="quantity"]');
+        const qty = qtyCell ? (parseInt(qtyCell.innerText) || 0) : 0;
+
+        if (productName && qty > 0) {
+            billQtyMap[productName] = (billQtyMap[productName] || 0) + qty;
+            billItems.push({ name: productName, qty: qty });
+        }
+    }
+
+    if (billItems.length === 0) {
+        alert("Please add at least one product with valid quantity.");
+        return;
+    }
+
+    // Validate Stock Availability before saving
+    for (let prodName in billQtyMap) {
+        const reqQty = billQtyMap[prodName];
+        const matched = (window.inventoryProducts || []).find(p => p.name.toLowerCase() === prodName.toLowerCase());
+
+        if (matched) {
+            const availableStock = matched.available_qty;
+            if (reqQty > availableStock) {
+                alert(`Only ${availableStock} units of ${matched.name} are available in stock.`);
+                return;
+            }
+        }
+    }
+
+    // Clean HTML for saving (Completely remove trash icons / action cells!)
+    const original = document.getElementById("a4");
+    const clone = original.cloneNode(true);
+
+    clone.querySelectorAll(".selected-row").forEach(row => row.classList.remove("selected-row"));
+    clone.querySelectorAll(".active-cell").forEach(cell => cell.classList.remove("active-cell"));
+    clone.querySelectorAll(".no-print").forEach(el => el.remove());
+
+    const cleanedHTML = clone.outerHTML;
+
+    if (!currentInvoiceId) {
+        const name = prompt("Enter Invoice Name / Number");
+        if (!name) return;
+
+        fetch("/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name: name,
+                data: cleanedHTML,
+                bill_items: billItems
+            })
+        })
+        .then(res => res.json())
+        .then(result => {
+            currentInvoiceId = result.invoice_id;
+            currentFileName = name;
+            alert("Bill saved successfully.");
+            loadInvoiceList();
+            loadProductNames();
+        });
+    } else {
+        fetch("/update-invoice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: currentInvoiceId,
+                name: currentFileName,
+                data: cleanedHTML,
+                bill_items: billItems
+            })
+        })
+        .then(res => res.json())
+        .then(result => {
+            alert("Bill saved successfully.");
+            loadInvoiceList();
+            loadProductNames();
+        });
+    }
+}
+
+async function loadInvoiceList() {
+    const res = await fetch("/get-invoices");
+    const invoices = await res.json();
+    const container = document.getElementById("invoice-list");
+    container.innerHTML = "";
+
+    let currentGroup = "";
+    invoices.sort((a,b) => b.id - a.id).forEach(inv => {
+        const label = getDateLabel(inv.id);
+
+        if (label !== currentGroup) {
+            const header = document.createElement("div");
+            header.className = "date-header";
+            header.textContent = label;
+            container.appendChild(header);
+            currentGroup = label;
+        }
+
+        let custName = "";
+        let grandTotal = "";
+        let invoiceNo = inv.name;
+
+        if (inv.data) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(inv.data, "text/html");
+            const custElem = doc.getElementById("custName");
+            if (custElem) custName = custElem.textContent.trim();
+            const grandElem = doc.getElementById("grand-amount");
+            if (grandElem) grandTotal = grandElem.textContent.trim();
+            const invNoElem = doc.getElementById("invoiceNo");
+            if (invNoElem && invNoElem.textContent.trim()) {
+                invoiceNo = invNoElem.textContent.trim() + " (" + inv.name + ")";
+            }
+        }
+
+        const row = document.createElement("div");
+        row.className = "invoice-card";
+        row.style.cssText = `border: 1px solid #d0d7de; border-radius: 6px; padding: 10px; margin-bottom: 10px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.05);`;
+
+        row.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <div style="font-weight: bold; font-size: 13px; color: #007bff; cursor: pointer;" onclick="viewInvoice('${inv.id}')" title="Click to View">
+                    📄 ${escapeHtml(inv.name)}
+                </div>
+            </div>
+            ${custName ? `<div style="font-size: 11px; color: #555;">Customer: <b>${escapeHtml(custName)}</b></div>` : ''}
+            ${grandTotal ? `<div style="font-size: 11px; color: #28a745; font-weight: bold; margin-top: 2px;">Total: ${escapeHtml(grandTotal)}</div>` : ''}
+            
+            <div style="display: flex; gap: 4px; margin-top: 8px; justify-content: flex-end;">
+                <button onclick="viewInvoice('${inv.id}')" class="primary-btn" style="padding: 3px 7px; font-size: 11px; background: #17a2b8;">👁️ View</button>
+                <button onclick="loadInvoice('${inv.id}')" class="primary-btn" style="padding: 3px 7px; font-size: 11px; background: #ffc107; color: #212529;">✏️ Edit</button>
+                <button onclick="printSavedInvoice('${inv.id}')" class="primary-btn" style="padding: 3px 7px; font-size: 11px; background: #6c757d;">🖨️ Print</button>
+                <button onclick="deleteInvoice('${inv.id}')" class="primary-btn" style="padding: 3px 7px; font-size: 11px; background: #dc3545; color: white;">🗑️ Delete</button>
+            </div>
+        `;
+        container.appendChild(row);
+    });
+}
+
+// View bill in Read-Only mode
+async function viewInvoice(id) {
+    await loadInvoice(id);
+    setReadOnlyMode(true);
+}
+
+// Enable/disable Read-Only mode
+function setReadOnlyMode(readOnly) {
+    isReadOnly = readOnly;
+    const a4 = document.getElementById("a4");
+    if (!a4) return;
+
+    const editables = a4.querySelectorAll('[contenteditable]');
+    editables.forEach(el => {
+        el.contentEditable = readOnly ? "false" : "true";
+    });
+
+    const banner = document.getElementById("editing-banner");
+    const bannerText = document.getElementById("editing-banner-text");
+    const modeBtn = document.getElementById("mode-toggle-btn");
+
+    if (readOnly) {
+        if (banner) banner.style.display = "flex";
+        if (bannerText) bannerText.innerHTML = `👁️ Viewing Bill: <b>${escapeHtml(currentFileName)}</b> (Read Only)`;
+        if (modeBtn) {
+            modeBtn.innerText = "✏️ Switch to Edit Mode";
+            modeBtn.onclick = () => setReadOnlyMode(false);
+        }
+    } else {
+        if (banner) banner.style.display = "flex";
+        if (bannerText) bannerText.innerHTML = `✏️ Editing Saved Bill: <b>${escapeHtml(currentFileName)}</b>`;
+        if (modeBtn) {
+            modeBtn.innerText = "👁️ Read Only";
+            modeBtn.onclick = () => setReadOnlyMode(true);
+        }
+    }
+}
+
+function toggleEditMode() {
+    setReadOnlyMode(!isReadOnly);
+}
+
+async function loadInvoice(id) {
+    const res = await fetch("/get-invoice/" + id);
+    const data = await res.json();
+    if (!data.data) return;
+
+    document.getElementById("a4").outerHTML = data.data;
+    currentInvoiceId = data.id;
+    currentFileName = data.name;
+
+    // Clean out any legacy non-print elements/trash icons inside table
+    const a4 = document.getElementById("a4");
+    if (a4) {
+        a4.querySelectorAll(".no-print").forEach(el => el.remove());
+    }
+
+    // Configure editable cells
+    const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
+    rows.forEach(r => {
+        const nameCell = r.querySelector('[data-field="product_name"]');
+        if (nameCell) {
+            nameCell.contentEditable = "true";
+            nameCell.setAttribute("oninput", "onProductNameEdited(this)");
+        }
+        const qtyCell = r.querySelector('[data-field="quantity"]');
+        if (qtyCell) {
+            qtyCell.contentEditable = "true";
+            qtyCell.setAttribute("oninput", "onQtyCellEdited(this)");
+        }
+        const rateCell = r.querySelector('[data-field="rate"]');
+        if (rateCell) {
+            rateCell.contentEditable = "true";
+            rateCell.setAttribute("oninput", "onRateCellEdited(this)");
+        }
+    });
+
+    calculateGst();
+    calculateGrandTotal();
+
+    setReadOnlyMode(false);
+}
+
+function loadNewInvoice(billNo) {
+    const autoNo = billNo || 1;
+    const cashierName = (document.getElementById("posCashierInput") || {}).value || "";
+    document.getElementById("a4").outerHTML = `
+    <div id="a4" class="a4-portrait">
+
+        <!-- ===== THERMAL RECEIPT HEADER ===== -->
+        <div style="display:flex; align-items:flex-start; gap:10px; font-family:'Courier New',Courier,monospace; line-height:1.5;">
+            <img src="/static/receipt_logo.png" alt="Logo" style="width:65px; height:65px; object-fit:contain; flex-shrink:0; margin-top:2px;">
+            <div style="text-align:center; flex:1;">
+                <div style="font-size:15px; font-weight:bold; letter-spacing:1px;">SRI TRADERS</div>
+                <div style="font-size:11px; margin-top:2px;">Sales | Service | Spares</div>
+                <div style="font-size:10px; margin-top:4px; line-height:1.4;">
+                    580, SATHY ROAD,<br>
+                    KAVINDAPADI,<br>
+                    ERODE - 638 455
+                </div>
+                <div style="font-size:11px; margin-top:3px;">Shop Ph : 90431 24078</div>
+            </div>
+        </div>
+
+        <hr class="receipt-eq-divider" style="border:none; border-top:2px solid #000; margin:5px 0;">
+
+        <!-- ===== BILL INFO ===== -->
+        <div style="font-family:'Courier New',Courier,monospace; font-size:11px; line-height:1.6;">
+            <div style="display:flex; justify-content:space-between;">
+                <span>Bill No :</span>
+                <span contenteditable="true" id="invoiceNo" style="font-weight:bold; min-width:60px; text-align:right;">${autoNo}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Date    :</span>
+                <span contenteditable="true" id="dated" style="font-weight:bold;">${formattedDate()}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Time    :</span>
+                <span contenteditable="true" id="timed" style="font-weight:bold;">${formattedTime()}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Cashier :</span>
+                <span id="receiptCashier" style="font-weight:bold;">${escapeHtml(cashierName)}</span>
+            </div>
+        </div>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== PRODUCT TABLE ===== -->
+        <table style="width:100%; border-collapse:collapse; font-family:'Courier New',Courier,monospace; font-size:11px;">
+            <thead>
+                <tr style="border-bottom:1px dashed #000;">
+                    <th style="text-align:left; padding:2px 1px; font-weight:bold; width:36%;">Item</th>
+                    <th style="text-align:center; padding:2px 1px; font-weight:bold; width:10%;">Qty</th>
+                    <th style="text-align:right; padding:2px 1px; font-weight:bold; width:17%;">Rate</th>
+                    <th style="text-align:center; padding:2px 1px; font-weight:bold; width:10%;">GST</th>
+                    <th style="text-align:right; padding:2px 1px; font-weight:bold; width:27%;">Amount</th>
+                </tr>
+            </thead>
+            <tbody id="invoice-body">
+                <!-- Product rows inserted here by addProductToBillFromPanel() -->
+                <tr id="filler-row" style="display:none;">
+                    <td></td><td></td><td></td><td></td><td></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== BILL SUMMARY ===== -->
+        <div style="font-family:'Courier New',Courier,monospace; font-size:11px; line-height:1.7;">
+            <div style="display:flex; justify-content:space-between;">
+                <span>Items</span>
+                <span>: <span id="total-items-display" style="font-weight:bold;">0</span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Quantity</span>
+                <span>: <span id="total-quantity-display" style="font-weight:bold;">0</span></span>
+            </div>
+        </div>
+
+        <!-- Hidden GST display (keeps JS engine happy, not shown on receipt) -->
+        <span id="gst-total-display" style="display:none;">&#8377; 0.00</span>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== GRAND TOTAL ===== -->
+        <div style="font-family:'Courier New',Courier,monospace; display:flex; justify-content:space-between; font-size:13px; font-weight:bold; padding:2px 0;">
+            <span>Grand Total</span>
+            <span id="grand-amount">&#8377; 0.00</span>
+        </div>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== PAYMENT METHOD ===== -->
+        <div style="font-family:'Courier New',Courier,monospace; font-size:11px; display:flex; justify-content:space-between;">
+            <span>Payment</span>
+            <span>: <span contenteditable="true" id="paymentMode" style="font-weight:bold; min-width:40px;">CASH</span></span>
+        </div>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== CUSTOMER DETAILS ===== -->
+        <div style="font-family:'Courier New',Courier,monospace; font-size:11px; line-height:1.7;">
+            <div style="font-weight:bold; text-align:center; margin-bottom:3px;">Customer Details</div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Name</span>
+                <span>: <span contenteditable="true" id="custName" style="font-weight:bold; min-width:100px; display:inline-block;"></span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Phone</span>
+                <span>: <span contenteditable="true" id="custMobile" style="font-weight:bold; min-width:100px; display:inline-block;"></span></span>
+            </div>
+        </div>
+
+        <hr class="receipt-divider" style="border:none; border-top:1px dashed #000; margin:5px 0;">
+
+        <!-- ===== RETURN POLICY ===== -->
+        <div style="text-align:center; font-family:'Courier New',Courier,monospace; font-size:9px; padding:3px 0; line-height:1.4;">
+            Returns are not accepted for opened packages.
+        </div>
+
+        <hr class="receipt-eq-divider" style="border:none; border-top:2px solid #000; margin:5px 0;">
+
+        <!-- ===== FOOTER ===== -->
+        <div style="text-align:center; font-family:'Courier New',Courier,monospace; font-size:12px; line-height:1.8; padding:4px 0;">
+            <div style="font-weight:bold;">THANK YOU</div>
+            <div>VISIT AGAIN</div>
+        </div>
+
+        <hr class="receipt-eq-divider" style="border:none; border-top:2px solid #000; margin:5px 0;">
+
+        <!-- Hidden IDs kept for JS GST engine and save/load compatibility -->
+        <div style="display:none;">
+            <table>
+                <tr id="gst-total-row">
+                    <td>Total</td><td>0.00</td><td>0%</td>
+                    <td id="hidden-sgst">0.00</td>
+                    <td>0%</td>
+                    <td id="hidden-cgst">0.00</td>
+                    <td id="hidden-tot-tax">0.00</td>
+                </tr>
+            </table>
+            <span id="grand-quantity">0</span>
+            <div id="total_calc"></div>
+        </div>
+
+    </div>
+    `;
+
+    currentInvoiceId = null;
+    currentFileName = null;
+    isReadOnly = false;
+
+    const banner = document.getElementById("editing-banner");
+    if (banner) banner.style.display = "none";
+
+    // Restore cashier name from input on the receipt after DOM refresh
+    const cashierInput = document.getElementById("posCashierInput");
+    const cashierEl = document.getElementById("receiptCashier");
+    if (cashierInput && cashierEl) cashierEl.innerText = cashierInput.value || "";
+
+    const searchInput = document.getElementById("posProductSearch");
+    if (searchInput) {
+        setTimeout(() => searchInput.focus(), 100);
+    }
+}
+
+// Wrapper to auto-fetch next bill number before creating a new bill
+async function newBillWithAutoNumber() {
+    const nextNo = await getNextBillNumber();
+    loadNewInvoice(nextNo);
+}
+
+async function printSavedInvoice(id) {
+    await loadInvoice(id);
+    printPage();
+}
+
+async function deleteInvoice(id) {
+    if (!confirm("Are you sure you want to permanently delete this bill?")) return;
+
+    await fetch("/delete-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: id })
+    });
+    alert("Bill deleted successfully. Inventory stock has been restored.");
+    loadInvoiceList();
+    loadProductNames();
+    if (currentInvoiceId === id) {
+        newBillWithAutoNumber();
+    }
+}
+
+function getDateLabel(timestamp){
+    const date = new Date(parseInt(timestamp));
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate()-1);
+
+    if(date.toDateString() === today.toDateString()){
+        return "Today";
+    }
+    if(date.toDateString() === yesterday.toDateString()){
+        return "Yesterday";
+    }
+    return date.toLocaleDateString();
+}
+
+function searchInvoices(){
+    const q = document.getElementById("invoiceSearch").value.toLowerCase().trim();
+    document.querySelectorAll("#invoice-list .invoice-card").forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(q) ? "block" : "none";
+    });
+}
+</script>
+</body>
+</html>

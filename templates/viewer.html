@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Invoice Viewer</title>
+    <link rel="icon" href="{{ url_for('static', filename='icon.jpeg') }}" type="image/jpeg">
+    <style>
+        body {
+            font-family: Arial;
+            padding: 20px;
+        }
+
+        .invoice-header {
+            background: #f0f0f0;
+            padding: 10px;
+            margin-top: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;  /* left & right */
+            align-items: center;
+        }
+
+        .invoice-content {
+            display: none;
+            padding: 15px;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+        }
+
+        
+
+        
+
+#a4 {
+    position: relative;      /* required */
+    background: white;
+    padding: 15mm;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Portrait */
+.a4-portrait {
+    width: 210mm;
+    height: calc(297mm - 0.5mm);
+}
+
+/* Landscape */
+.a4-landscape {
+    width: 297mm;
+    height: 210mm;
+}
+
+
+/* ===== MAIN LAYOUT TABLE ===== */
+.invoice-table {
+    width: 100%;
+    height: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.invoice-table td {
+    padding: 0;
+    border: none;
+    vertical-align: top;
+}
+
+.invoice-table tr:first-child {
+    height: auto;
+}
+
+.invoice-table tr:last-child {
+    height: 100%;
+}
+
+
+/* ===== TOP TABLE ===== */
+.top-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.top-table td {
+    border: 1px solid black;
+    padding: 3px 5px;
+    vertical-align: top;
+    font-size: 11px;
+    min-height: 40px;
+}
+
+/* 50% left / 50% right */
+.top-table col {
+    width: 25%;
+}
+
+/* ===== BODY TABLE ===== */
+.body-table {
+    width: 100%;
+    height: 100%;
+    border: 1px solid black;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 11px;
+}
+
+/* Vertical borders only */
+.body-table th,
+.body-table td {
+    border-left: 1px solid black;
+    border-right: 1px solid black;
+}
+
+
+/* Header bottom border */
+.body-table thead th {
+    border-bottom: 1px solid black;
+    font-size: 11px;
+    padding: 3px 0px;
+}
+
+/* Remove internal horizontal lines */
+.body-table tbody td {
+    font-size: 11px;
+    border-top: none;
+    border-bottom: none;
+    padding: 5px 3px;   /* spacing between rows */
+}
+
+/* Footer top border */
+.body-table tfoot td {
+    font-size: small;
+    border-top: 1px solid black;
+    padding: 3px;
+}
+
+/* Editable cells */
+[contenteditable="true"] {
+    outline: none;
+}
+
+@media print {
+    body {
+        background: none;
+        margin: 0;
+    }
+    #a4 {
+        margin: 0;
+    }
+    button {
+        display: none !important;
+    }
+    .pdf-mode .active-cell {
+    outline: none !important;
+    background: transparent !important;
+}
+}
+
+#editor-toolbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: #f4f4f4;
+    padding: 8px;
+    display: flex;
+    gap: 5px;
+    z-index: 1000;
+    border-bottom: 1px solid #ccc;
+}
+
+.selected-row td {
+    background-color: #e5fcff;
+}
+
+.active-cell {
+    outline: 2px solid #009c05;
+    outline-offset: -2px;
+}
+
+.calc-cell {
+    white-space: normal !important;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+
+.watermark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+
+    width: 750px;
+    height: 750px;
+
+    background: url("{{ url_for('static', filename='icon.jpeg') }}") no-repeat center;
+    background-size: contain;
+
+    transform: translate(-50%, -50%);   /* 🔒 physical center lock */
+    opacity: 0.05;
+    pointer-events: none;
+    z-index: 0;
+}
+
+
+
+
+
+.top-nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    padding: 0 15px;
+    background: #d2ffcd;
+    border-bottom: 1px solid #ccc;
+    z-index: 1000;
+}
+
+.top-nav h2 {
+    margin: 0;
+    font-size: 18px;
+    white-space: nowrap;
+}
+
+.top-nav select,
+.top-nav button {
+    padding: 6px 10px;
+    font-size: 14px;
+}
+
+#searchInput {
+    flex: 1;                 /* 🔥 occupies remaining width */
+    padding: 7px 10px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.primary-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.primary-btn:hover {
+    background: #0056b3;
+}
+    </style>
+</head>
+<body>
+
+<nav class="top-nav">
+    <h2>SRI TRADERS</h2>
+
+    <input type="text"
+       id="searchInput"
+       placeholder="Search..."
+       oninput="filterInvoices()">
+
+    <select id="searchType">
+        <option value="invoice">Search by Invoice No</option>
+        <option value="name">Search by Name</option>
+    </select>
+
+    <button class="primary-btn" onclick="window.location.href='/'">
+        Create New Invoice
+    </button>
+</nav>
+
+<div style="margin-top: 50px;"> 
+{% for invoice in invoices %}
+<div class="invoice-block">
+
+    <div class="invoice-header" onclick="toggle('inv{{ loop.index }}')">
+        <span style="cursor:pointer;">
+            {{ invoice.id }}
+        </span>
+
+        <div style="display:flex; gap:6px;">
+            <button onclick="saveInvoice('{{ invoice.id }}','inv{{ loop.index }}')">Save</button>
+            <button onclick="printPDF('inv{{ loop.index }}')">Print</button>
+            <button onclick="sharePDF('inv{{ loop.index }}')">Share</button>
+        </div>
+    </div>
+
+    <div id="inv{{ loop.index }}" class="invoice-content">
+        {{ invoice.data | safe }}
+    </div>
+
+</div>
+{% endfor %}
+</div>
+
+
+<script src="{{ url_for('static', filename='module.js') }}"></script>
+
+<script>
+function toggle(id) {
+    var element = document.getElementById(id);
+
+    if (element.style.display === "none" || element.style.display === "") {
+        element.style.display = "block";
+    } else {
+        element.style.display = "none";
+    }
+}
+
+
+function filterInvoices() {
+    const searchValue = document.getElementById("searchInput").value.toLowerCase();
+    const searchType = document.getElementById("searchType").value;
+    const invoiceBlocks = document.querySelectorAll(".invoice-block");
+
+    invoiceBlocks.forEach(block => {
+        const header = block.querySelector(".invoice-header");
+        const content = block.querySelector(".invoice-content");
+
+        let textToSearch = "";
+
+        if (searchType === "invoice") {
+            // Search only invoice number
+            textToSearch = header.innerText.toLowerCase();
+        } else {
+            // Search entire invoice HTML (name inside invoice)
+            textToSearch = content.innerText.toLowerCase();
+        }
+
+        if (textToSearch.includes(searchValue)) {
+            block.style.display = "block";
+        } else {
+            block.style.display = "none";
+        }
+    });
+}
+
+
+
+function generatePDF(action, invoiceId) {
+
+    const container = document.getElementById(invoiceId);
+    const element = container.querySelector("#a4");
+
+    // 🔴 Temporarily remove highlight
+    const selectedRows = element.querySelectorAll(".selected-row");
+    selectedRows.forEach(row => {
+        row.classList.add("print-clean");
+        row.classList.remove("selected-row");
+    });
+
+    const opt = {
+        margin: 0,
+        filename: 'Tax-Invoice.pdf',
+        image: { type: 'jpeg', quality: 1 },
+        html2canvas: {
+            scale: 2,
+            scrollY: 0
+        },
+        jsPDF: {
+            unit: 'mm',
+            format: 'a4',
+            orientation: "portrait"
+        }
+    };
+
+    if (action === "download") {
+        html2pdf().set(opt).from(element).save().then(restoreHighlight);
+    }
+
+    if (action === "print") {
+        html2pdf()
+            .set(opt)
+            .from(element)
+            .outputPdf('blob')
+            .then(function (blob) {
+
+                restoreHighlight();
+
+                const blobUrl = URL.createObjectURL(blob);
+                const win = window.open(blobUrl);
+
+                win.onload = function () {
+                    win.focus();
+                    win.print();
+                };
+            });
+    }
+
+    function restoreHighlight() {
+        element.querySelectorAll(".print-clean").forEach(row => {
+            row.classList.add("selected-row");
+            row.classList.remove("print-clean");
+        });
+    }
+}
+
+async function printPDF(invoiceId) {
+
+    const container = document.getElementById(invoiceId);
+    const element = container.querySelector("#a4");
+
+    const opt = {
+        margin: 0,
+        filename: "Tax-Invoice.pdf",
+        image: { type: "jpeg", quality: 1 },
+        html2canvas: { scale: 2, scrollY: 0 },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+    };
+
+    try {
+
+        const blob = await html2pdf().set(opt).from(element).outputPdf("blob");
+
+        const formData = new FormData();
+        formData.append("file", blob, "invoice.pdf");
+
+        const response = await fetch("/pdf-action", {
+            method: "POST",
+            body: formData
+        });
+
+        const pdfBlob = await response.blob();
+        const url = URL.createObjectURL(pdfBlob);
+
+        const iframe = document.createElement("iframe");
+        iframe.style.position = "fixed";
+        iframe.style.right = "0";
+        iframe.style.bottom = "0";
+        iframe.style.width = "0";
+        iframe.style.height = "0";
+        iframe.style.border = "0";
+
+        iframe.src = url;
+        document.body.appendChild(iframe);
+
+        iframe.onload = function () {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+        };
+
+    } catch (err) {
+        console.error("Print failed", err);
+        alert("Print failed");
+    }
+}
+
+
+
+async function sharePDF(invoiceId) {
+
+    // Generate PDF as blob first (reuse your html2pdf config)
+    const container = document.getElementById(invoiceId);
+    const element = container.querySelector("#a4");
+
+    const opt = {
+        margin: 0,
+        filename: 'Tax-Invoice.pdf',
+        image: { type: 'jpeg', quality: 1 },
+        html2canvas: { scale: 2, scrollY: 0 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: "portrait" }
+    };
+
+    const pdfBlob = await html2pdf().set(opt).from(element).outputPdf('blob');
+
+    const file = new File([pdfBlob], 'Tax-Invoice.pdf', {
+        type: 'application/pdf'
+    });
+
+    /* ✅ Modern browsers / mobile */
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+            await navigator.share({
+                files: [file],
+                title: 'Invoice',
+                text: 'Sharing invoice PDF'
+            });
+        } catch (err) {
+            console.log("Share cancelled");
+        }
+    } 
+    /* 🔁 Fallback for desktop / EXE */
+    else {
+        const url = URL.createObjectURL(pdfBlob);
+        window.open(url);   // user can manually share
+        alert("Sharing not supported here. PDF opened instead.");
+    }
+}
+
+
+async function saveInvoice(invoiceId, containerId) {
+
+    const container = document.getElementById(containerId);
+    const htmlData = container.innerHTML;
+
+    const response = await fetch("/update-invoice", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            id: invoiceId,
+            data: htmlData
+        })
+    });
+
+    const result = await response.json();
+
+    alert(result.message);
+}
+</script>
+
+</body>
+</html>
