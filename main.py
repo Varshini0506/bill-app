@@ -30,8 +30,18 @@ app = Flask(
 # =============================
 # Storage Folder
 # =============================
-FOLDER_PATH = r"C:\SRI Traders"
-os.makedirs(FOLDER_PATH, exist_ok=True)
+if os.name == "nt" and os.path.exists(r"C:\\"):
+    FOLDER_PATH = r"C:\SRI Traders"
+else:
+    import tempfile
+    FOLDER_PATH = os.path.join(tempfile.gettempdir(), "SRI_Traders")
+
+try:
+    os.makedirs(FOLDER_PATH, exist_ok=True)
+except Exception:
+    import tempfile
+    FOLDER_PATH = os.path.join(tempfile.gettempdir(), "SRI_Traders")
+    os.makedirs(FOLDER_PATH, exist_ok=True)
 
 FILE_PATH = os.path.join(FOLDER_PATH, "invoices.xlsx")
 INVENTORY_FILE_PATH = os.path.join(FOLDER_PATH, "inventory.xlsx")
