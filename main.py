@@ -15,7 +15,7 @@ def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 # =============================
@@ -633,7 +633,7 @@ def open_browser():
 
 if __name__ == "__main__":
     threading.Timer(1.5, open_browser).start()
-    app.run(debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False)
 
 
 # py -3.12 -m PyInstaller --onefile --noconsole --add-data "templates;templates" --add-data "static;static" main.py
