@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sales & Billing History - SRI TRADERS</title>
+<link rel="icon" href="{{ url_for('static', filename='icon.jpeg') }}" type="image/jpeg">
+<style>
+body {
+    background: #eef2f5;
+    margin: 0;
+    padding: 0;
+    padding-top: 60px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+#editor-toolbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    padding: 8px 15px;
+    display: flex;
+    gap: 8px;
+    z-index: 1000;
+    border-bottom: 1px solid #d0d7de;
+    align-items: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.primary-btn {
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 8px 15px;
+    font-size: 13px;
+    font-weight: bold;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+.primary-btn:hover {
+    background: #0056b3;
+}
+
+.history-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding: 15px;
+    height: calc(100vh - 90px);
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+.section-card {
+    background: white;
+    padding: 18px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    border: 1px solid #d0d7de;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.section-title {
+    margin: 0 0 5px 0;
+    color: #005703;
+    font-size: 16px;
+    font-weight: bold;
+    border-bottom: 2px solid #005703;
+    padding-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Month Navigation Bar */
+.month-nav-btn {
+    background: #005703;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.2s, transform 0.1s;
+    user-select: none;
+}
+
+.month-nav-btn:hover {
+    background: #007b04;
+}
+
+.month-nav-btn:active {
+    transform: scale(0.97);
+}
+
+/* Dashboard Summary Cards */
+.dashboard-summary {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+}
+
+.summary-card {
+    flex: 1;
+    border-radius: 6px;
+    padding: 12px 10px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.summary-card h4 {
+    margin: 0 0 6px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summary-card .value {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+/* Table Styles */
+.data-table-container {
+    overflow-x: auto;
+    border: 1px solid #000;
+    border-radius: 4px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.data-table th, .data-table td {
+    border: 1px solid #000;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.data-table th {
+    background-color: #f8f9fa;
+    font-weight: bold;
+    border-bottom: 2px solid #000;
+}
+
+.data-table tr:hover {
+    background-color: #f1f3f5;
+}
+
+.payment-badge-cash {
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 11px;
+    border: 1px solid #a5d6a7;
+}
+
+.payment-badge-online {
+    background: #e3f2fd;
+    color: #1565c0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 11px;
+    border: 1px solid #90caf9;
+}
+</style>
+</head>
+<body>
+
+<div id="editor-toolbar">
+    <div style="font-family:Brush Script MT;font-weight: 800;font-size: x-large;margin-right: 20px;color: #005703;">Sri Traders</div>
+    <button onclick="window.location.href='/'" class="primary-btn">Invoice Billing</button>
+    <button onclick="window.location.href='/inventory'" class="primary-btn" style="background-color: #007bff; margin-left: 5px;">Inventory Management</button>
+    <button class="primary-btn" style="background-color: #6c757d; margin-left: 5px; cursor: default;" disabled>History</button>
+</div>
+
+<div class="history-layout">
+    
+    <!-- A. MONTH NAVIGATION & SEARCH BAR -->
+    <div class="section-card" style="padding: 12px 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
+            
+            <!-- Left: Month Navigation Arrows -->
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <button onclick="changeMonth(-1)" class="month-nav-btn" title="Previous Month">⬆ Previous Month</button>
+                <div id="month-nav-display" style="font-size: 18px; font-weight: bold; color: #005703; min-width: 180px; text-align: center;">August, 2026</div>
+                <button onclick="changeMonth(1)" class="month-nav-btn" title="Next Month">⬇ Next Month</button>
+            </div>
+
+            <!-- Right: Search History Direct Selector -->
+            <div style="display: flex; align-items: center; gap: 8px; border-left: 2px solid #e0e0e0; padding-left: 15px;">
+                <span style="font-size: 13px; font-weight: bold; color: #333;">🔍 History Search:</span>
+                
+                <label for="search-month-select" style="font-size: 12px; font-weight: bold; color: #555;">Month:</label>
+                <select id="search-month-select" style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; outline: none; background: white;">
+                    <option value="0">January</option>
+                    <option value="1">February</option>
+                    <option value="2">March</option>
+                    <option value="3">April</option>
+                    <option value="4">May</option>
+                    <option value="5">June</option>
+                    <option value="6">July</option>
+                    <option value="7">August</option>
+                    <option value="8">September</option>
+                    <option value="9">October</option>
+                    <option value="10">November</option>
+                    <option value="11">December</option>
+                </select>
+
+                <label for="search-year-select" style="font-size: 12px; font-weight: bold; color: #555;">Year:</label>
+                <select id="search-year-select" style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; outline: none; background: white;">
+                </select>
+
+                <button onclick="onSearchGo()" class="primary-btn" style="background: #005703; padding: 6px 14px; font-size: 13px; margin-left: 4px;">Search</button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- B. DAILY SALES SUMMARY -->
+    <div class="section-card">
+        <div class="section-title">
+            <span>📊 Daily Sales Summary (Today)</span>
+            <span id="today-date-label" style="font-size: 13px; color: #555; font-weight: normal;"></span>
+        </div>
+        <div class="dashboard-summary">
+            <div class="summary-card" style="background: #e8f5e9; border: 1px solid #c8e6c9;">
+                <h4 style="color: #2e7d32;">Total Bills</h4>
+                <div id="daily-total-bills" class="value" style="color: #1b5e20;">0</div>
+            </div>
+            <div class="summary-card" style="background: #e3f2fd; border: 1px solid #bbdefb;">
+                <h4 style="color: #1565c0;">Total Quantity Sold</h4>
+                <div id="daily-total-qty" class="value" style="color: #0d47a1;">0</div>
+            </div>
+            <div class="summary-card" style="background: #e0f2f1; border: 1px solid #b2dfdb;">
+                <h4 style="color: #00695c;">Daily Sales Amount</h4>
+                <div id="daily-sales-amount" class="value" style="color: #004d40;">₹ 0.00</div>
+            </div>
+            <div class="summary-card" style="background: #fff3e0; border: 1px solid #ffe0b2;">
+                <h4 style="color: #e65100;">Daily GST Collected</h4>
+                <div id="daily-gst-collected" class="value" style="color: #e65100;">₹ 0.00</div>
+            </div>
+            <div class="summary-card" style="background: #f3e5f5; border: 1px solid #e1bee7;">
+                <h4 style="color: #6a1b9a;">Daily Profit</h4>
+                <div id="daily-profit" class="value" style="color: #4a148c;">₹ 0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- C. MONTHLY SUMMARY -->
+    <div class="section-card">
+        <div class="section-title">
+            <span>📈 Monthly Summary</span>
+            <span id="month-date-label" style="font-size: 13px; color: #555; font-weight: normal;"></span>
+        </div>
+        <div class="dashboard-summary">
+            <div class="summary-card" style="background: #e8f5e9; border: 1px solid #c8e6c9;">
+                <h4 style="color: #2e7d32;">Monthly Total Sales</h4>
+                <div id="monthly-total-sales" class="value" style="color: #1b5e20;">₹ 0.00</div>
+            </div>
+            <div class="summary-card" style="background: #e3f2fd; border: 1px solid #bbdefb;">
+                <h4 style="color: #1565c0;">Monthly Total Quantity Sold</h4>
+                <div id="monthly-total-qty" class="value" style="color: #0d47a1;">0</div>
+            </div>
+            <div class="summary-card" style="background: #fff3e0; border: 1px solid #ffe0b2;">
+                <h4 style="color: #e65100;">Monthly GST Collected</h4>
+                <div id="monthly-gst-collected" class="value" style="color: #e65100;">₹ 0.00</div>
+            </div>
+            <div class="summary-card" style="background: #e8f5e9; border: 1px solid #a5d6a7;">
+                <h4 style="color: #1b5e20;">Monthly Total Profit</h4>
+                <div id="monthly-total-profit" class="value" style="color: #2e7d32;">₹ 0.00</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- D. MONTHLY SOLD PRODUCTS -->
+    <div class="section-card">
+        <div class="section-title">
+            <span id="sold-products-title">📦 Sold Products</span>
+        </div>
+        <div class="data-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 12%;">Date</th>
+                        <th style="width: 25%;">Product Name</th>
+                        <th style="width: 12%; text-align: center;">Quantity Sold</th>
+                        <th style="width: 15%; text-align: right;">Selling Price (₹)</th>
+                        <th style="width: 10%; text-align: center;">GST %</th>
+                        <th style="width: 14%; text-align: right;">Total Amount (₹)</th>
+                        <th style="width: 12%; text-align: center;">Payment Method</th>
+                    </tr>
+                </thead>
+                <tbody id="today-products-tbody">
+                    <tr>
+                        <td colspan="7" style="text-align: center; color: #666; padding: 20px;">Loading sold products...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- E. PRODUCT-WISE MONTHLY SALES -->
+    <div class="section-card">
+        <div class="section-title">
+            <span>🏆 Product-wise Monthly Sales</span>
+        </div>
+        <div class="data-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 45%;">Product Name</th>
+                        <th style="width: 25%; text-align: center;">Quantity Sold</th>
+                        <th style="width: 30%; text-align: right;">Monthly Profit (₹)</th>
+                    </tr>
+                </thead>
+                <tbody id="monthly-products-tbody">
+                    <tr>
+                        <td colspan="3" style="text-align: center; color: #666; padding: 20px;">Loading product-wise monthly sales...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let currentDate = new Date();
+
+document.addEventListener("DOMContentLoaded", function () {
+    const today = new Date();
+    document.getElementById("today-date-label").innerText = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    
+    populateYearDropdown();
+    updateMonthDisplay();
+    loadHistoryData();
+});
+
+function populateYearDropdown() {
+    const yearSelect = document.getElementById("search-year-select");
+    if (!yearSelect) return;
+
+    const currentYear = new Date().getFullYear();
+    const startYear = 2020;
+    const endYear = Math.max(currentYear + 5, 2030);
+
+    yearSelect.innerHTML = "";
+    for (let y = startYear; y <= endYear; y++) {
+        const opt = document.createElement("option");
+        opt.value = y;
+        opt.textContent = y;
+        yearSelect.appendChild(opt);
+    }
+}
+
+function updateMonthDisplay() {
+    const monthName = currentDate.toLocaleDateString('en-US', { month: 'long' });
+    const year = currentDate.getFullYear();
+    const formattedLabel = `${monthName}, ${year}`;
+
+    document.getElementById("month-nav-display").innerText = formattedLabel;
+    document.getElementById("month-date-label").innerText = `(${monthName} ${year})`;
+    document.getElementById("sold-products-title").innerText = `📦 Sold Products (${monthName} ${year})`;
+
+    const monthSelect = document.getElementById("search-month-select");
+    const yearSelect = document.getElementById("search-year-select");
+    if (monthSelect) monthSelect.value = currentDate.getMonth();
+    if (yearSelect) yearSelect.value = currentDate.getFullYear();
+}
+
+function changeMonth(delta) {
+    currentDate.setMonth(currentDate.getMonth() + delta);
+    updateMonthDisplay();
+    loadHistoryData();
+}
+
+function onSearchGo() {
+    const monthSelect = document.getElementById("search-month-select");
+    const yearSelect = document.getElementById("search-year-select");
+    if (!monthSelect || !yearSelect) return;
+
+    const selMonth = parseInt(monthSelect.value);
+    const selYear = parseInt(yearSelect.value);
+
+    currentDate = new Date(selYear, selMonth, 1);
+    updateMonthDisplay();
+    loadHistoryData();
+}
+
+function loadHistoryData() {
+    const yyyy = currentDate.getFullYear();
+    const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const monthParam = `${yyyy}-${mm}`;
+
+    fetch("/get-history-data?month=" + monthParam)
+        .then(res => res.json())
+        .then(data => {
+            renderDailySummary(data.daily_summary);
+            renderMonthlySummary(data.monthly_summary);
+            renderTodayProducts(data.today_sold_products);
+            renderProductMonthlySales(data.product_monthly_sales);
+        })
+        .catch(err => {
+            console.error("Error loading history data:", err);
+            document.getElementById("today-products-tbody").innerHTML = 
+                `<tr><td colspan="7" style="text-align: center; color: red; padding: 20px;">Failed to load history data.</td></tr>`;
+        });
+}
+
+function renderDailySummary(ds) {
+    if (!ds) return;
+    document.getElementById("daily-total-bills").textContent = ds.total_bills || 0;
+    document.getElementById("daily-total-qty").textContent = ds.total_qty || 0;
+    document.getElementById("daily-sales-amount").textContent = "₹ " + (ds.daily_sales_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("daily-gst-collected").textContent = "₹ " + (ds.daily_gst_collected || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("daily-profit").textContent = "₹ " + (ds.daily_profit || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderMonthlySummary(ms) {
+    if (!ms) return;
+    document.getElementById("monthly-total-sales").textContent = "₹ " + (ms.total_sales || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("monthly-total-qty").textContent = ms.total_qty || 0;
+    document.getElementById("monthly-gst-collected").textContent = "₹ " + (ms.total_gst_collected || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("monthly-total-profit").textContent = "₹ " + (ms.total_profit || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderTodayProducts(products) {
+    const tbody = document.getElementById("today-products-tbody");
+    tbody.innerHTML = "";
+
+    const monthName = currentDate.toLocaleDateString('en-US', { month: 'long' });
+    const year = currentDate.getFullYear();
+
+    if (!products || products.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #666; padding: 20px; font-weight: bold;">No sales history found for ${monthName} ${year}.</td></tr>`;
+        return;
+    }
+
+    products.forEach(p => {
+        const tr = document.createElement("tr");
+        const pmUpper = (p.payment_method || "").toUpperCase();
+        const isOnline = pmUpper === "ONLINE" || pmUpper === "UPI";
+        const payBadgeClass = isOnline ? "payment-badge-online" : "payment-badge-cash";
+        const displayPaymentMethod = pmUpper === "UPI" ? "Online" : (p.payment_method || "Cash");
+
+        tr.innerHTML = `
+            <td>${escapeHtml(p.date)}</td>
+            <td style="font-weight: bold;">${escapeHtml(p.product_name)}</td>
+            <td style="text-align: center; font-weight: bold;">${p.quantity}</td>
+            <td style="text-align: right;">₹ ${(parseFloat(p.selling_price) || 0).toFixed(2)}</td>
+            <td style="text-align: center; font-weight: bold; color: #007bff;">${escapeHtml(p.gst_pct)}</td>
+            <td style="text-align: right; font-weight: bold; color: #005703;">₹ ${(parseFloat(p.total_amount) || 0).toFixed(2)}</td>
+            <td style="text-align: center;"><span class="${payBadgeClass}">${escapeHtml(displayPaymentMethod)}</span></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function renderProductMonthlySales(products) {
+    const tbody = document.getElementById("monthly-products-tbody");
+    tbody.innerHTML = "";
+
+    const monthName = currentDate.toLocaleDateString('en-US', { month: 'long' });
+    const year = currentDate.getFullYear();
+
+    if (!products || products.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #666; padding: 20px; font-weight: bold;">No sales history found for ${monthName} ${year}.</td></tr>`;
+        return;
+    }
+
+    products.forEach(p => {
+        const tr = document.createElement("tr");
+        const profit = parseFloat(p.profit) || 0;
+        
+        tr.innerHTML = `
+            <td style="font-weight: bold;">${escapeHtml(p.name)}</td>
+            <td style="text-align: center; font-weight: bold;">${p.qty}</td>
+            <td style="text-align: right; font-weight: bold; color: ${profit >= 0 ? '#28a745' : '#dc3545'};">₹ ${profit.toFixed(2)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+</script>
+</body>
+</html>

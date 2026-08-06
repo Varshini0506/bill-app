@@ -1,5 +1,4 @@
 from flask import Flask, render_template, request, jsonify, send_file
-from openpyxl import Workbook, load_workbook
 import os
 import threading
 import sys
@@ -7,6 +6,14 @@ import webbrowser
 import io
 import time
 import json
+import re
+import traceback
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # =============================
 # Resource Path (for EXE build)
@@ -28,208 +35,227 @@ app = Flask(
 )
 
 # =============================
-# Storage Folder
+# Global Exception Handler
 # =============================
-if os.name == "nt" and os.path.exists(r"C:\\"):
-    FOLDER_PATH = r"C:\SRI Traders"
-else:
-    import tempfile
-    FOLDER_PATH = os.path.join(tempfile.gettempdir(), "SRI_Traders")
-
-try:
-    os.makedirs(FOLDER_PATH, exist_ok=True)
-except Exception:
-    import tempfile
-    FOLDER_PATH = os.path.join(tempfile.gettempdir(), "SRI_Traders")
-    os.makedirs(FOLDER_PATH, exist_ok=True)
-
-FILE_PATH = os.path.join(FOLDER_PATH, "invoices.xlsx")
-INVENTORY_FILE_PATH = os.path.join(FOLDER_PATH, "inventory.xlsx")
-
-# =============================
-# Invoice Excel Functions
-# =============================
-
-def ensure_excel():
-    if not os.path.exists(FILE_PATH):
-        wb = Workbook()
-        ws = wb.active
-        ws.append(["Invoice ID", "File Name", "HTML Data", "Bill Items JSON", "Status"])
-        wb.save(FILE_PATH)
-
-
-def load_invoices():
-    ensure_excel()
-    invoices = []
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row or row[0] is None:
-            continue
-        invoice_id = row[0]
-        file_name = row[1] if len(row) > 1 else ""
-        html_data = row[2] if len(row) > 2 else ""
-        bill_items = row[3] if len(row) > 3 and row[3] else ""
-        status = row[4] if len(row) > 4 and row[4] else "Active"
-        if status in ("Cancelled", "Deleted"):
-            continue
-        invoices.append({
-            "id": invoice_id,
-            "name": file_name,
-            "data": html_data,
-            "bill_items": bill_items,
-            "status": status
-        })
-    return invoices
-
-
-def save_invoice(file_name, html_data, bill_items_json="", status="Active"):
-    ensure_excel()
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    invoice_id = str(int(time.time() * 1000))  # unique timestamp
-    ws.append([invoice_id, file_name, html_data, bill_items_json, status])
-    wb.save(FILE_PATH)
-    return invoice_id
-
-
-def get_invoice_bill_items(invoice_id):
-    """Return the Bill Items JSON string for the given invoice_id."""
-    ensure_excel()
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row and row[0] is not None and str(row[0]) == str(invoice_id):
-            return row[3] if len(row) > 3 and row[3] else ""
-    return ""
-
-
-def update_invoice_excel(invoice_id, file_name, html_data, bill_items_json="", status="Active"):
-    ensure_excel()
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2):
-        if str(row[0].value) == str(invoice_id):
-            row[1].value = file_name
-            row[2].value = html_data
-            if len(row) > 3:
-                row[3].value = bill_items_json
-            if len(row) > 4:
-                row[4].value = status
-            else:
-                ws.cell(row=row[0].row, column=5, value=status)
-            break
-    wb.save(FILE_PATH)
-
+@app.errorhandler(Exception)
+def handle_exception(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    print("\n" + "=" * 60)
+    print("BACKEND EXCEPTION DETECTED - FULL TRACEBACK:")
+    traceback.print_exc()
+    print("=" * 60 + "\n")
+    app.logger.error(f"Backend Exception: {str(e)}", exc_info=True)
+    return jsonify({
+        "success": False,
+        "error": f"Server Error: {str(e)}"
+    }), 500
 
 # =============================
-# Inventory Excel Functions & Validation
+# Database Connection Helpers
 # =============================
+def get_db_url():
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                txt = f.read().strip()
+                for line in txt.splitlines():
+                    line = line.strip()
+                    if line.startswith("DATABASE_URL="):
+                        url = line.split("DATABASE_URL=", 1)[1].strip().strip("'\"")
+                        break
+                    elif line.startswith("postgresql://") or line.startswith("postgres://"):
+                        url = line
+                        break
+    if not url:
+        raise RuntimeError("DATABASE_URL not found in environment or .env file.")
+    return url
 
-def ensure_inventory_excel():
-    if not os.path.exists(INVENTORY_FILE_PATH):
-        wb = Workbook()
-        ws = wb.active
-        ws.append(["Product ID", "Product Name", "Purchase Quantity", "Sold Quantity", "Purchase Date", "Unit Price", "Notes", "GST", "Cost Price", "Monthly Sold JSON"])
-        wb.save(INVENTORY_FILE_PATH)
+def get_db_connection():
+    url = get_db_url()
+    return psycopg2.connect(url)
 
+# =============================
+# Helper Utilities
+# =============================
+def parse_gst_float(gst_val):
+    if gst_val is None:
+        return 5.0
+    gst_str = str(gst_val).replace("%", "").strip()
+    try:
+        return float(gst_str)
+    except Exception:
+        return 5.0
 
-def load_products():
-    ensure_inventory_excel()
-    products = []
-    wb = load_workbook(INVENTORY_FILE_PATH)
-    ws = wb.active
-    current_month = time.strftime("%Y-%m")
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row or row[0] is None:
-            continue
-        product_id = row[0]
-        name = row[1] if len(row) > 1 else ""
-        purchase_qty = row[2] if len(row) > 2 else 0
-        sold_qty = row[3] if len(row) > 3 else 0
-        purchase_date = row[4] if len(row) > 4 else ""
-        unit_price = row[5] if len(row) > 5 else None
-        notes = row[6] if len(row) > 6 else ""
-        gst = row[7] if len(row) > 7 else "5%"
-        cost_price = row[8] if len(row) > 8 and row[8] is not None else 0.0
-        monthly_sold_json = row[9] if len(row) > 9 and row[9] is not None else "{}"
+def extract_customer_info(html_data):
+    cust_name = ""
+    cust_phone = ""
+    if html_data:
+        m_name = re.search(r'id=["\']custName["\'][^>]*>(.*?)</span>', html_data, re.IGNORECASE)
+        if m_name:
+            raw = m_name.group(1)
+            cust_name = re.sub(r'<[^>]+>', '', raw).strip()
+        
+        m_phone = re.search(r'id=["\']custMobile["\'][^>]*>(.*?)</span>', html_data, re.IGNORECASE)
+        if m_phone:
+            raw = m_phone.group(1)
+            cust_phone = re.sub(r'<[^>]+>', '', raw).strip()
+    return cust_name, cust_phone
 
-        monthly_sold_qty = 0
+def extract_items_list(bill_items_json):
+    if not bill_items_json:
+        return []
+    try:
+        if isinstance(bill_items_json, (dict, list)):
+            data = bill_items_json
+        else:
+            data = json.loads(bill_items_json)
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return data.get("items", [])
+    except Exception:
+        pass
+    return []
+
+def calculate_bill_totals(items):
+    subtotal = 0.0
+    gst_total = 0.0
+    for item in items:
         try:
-            m_dict = json.loads(str(monthly_sold_json))
-            monthly_sold_qty = int(m_dict.get(current_month, 0))
+            qty = float(item.get("qty", 0))
+            rate = float(item.get("rate", 0))
+            gst_str = str(item.get("gst", "5")).replace("%", "").strip()
+            gst_pct = float(gst_str) if gst_str else 5.0
+            
+            item_sub = qty * rate
+            item_gst = item_sub * (gst_pct / 100.0)
+            
+            subtotal += item_sub
+            gst_total += item_gst
         except Exception:
-            monthly_sold_qty = 0
+            pass
+    grand_total = subtotal + gst_total
+    return round(subtotal, 2), round(gst_total, 2), round(grand_total, 2)
 
-        products.append({
-            "id": str(product_id),
-            "name": str(name),
-            "purchase_qty": int(purchase_qty) if purchase_qty is not None else 0,
-            "sold_qty": int(sold_qty) if sold_qty is not None else 0,
-            "purchase_date": str(purchase_date) if purchase_date is not None else "",
-            "unit_price": float(unit_price) if unit_price is not None else None,
-            "notes": str(notes) if notes is not None else "",
-            "gst": str(gst) if gst is not None else "5%",
-            "cost_price": float(cost_price) if cost_price is not None else 0.0,
-            "monthly_sold": monthly_sold_qty
-        })
+# =============================
+# Supabase DB Product Functions
+# =============================
+def load_products():
+    products = []
+    current_month = time.strftime("%Y-%m")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT product_id, product_name, purchase_quantity, sold_quantity, 
+                           purchase_date, unit_price, cost_price, gst, notes, monthly_sold
+                    FROM products
+                    ORDER BY product_name ASC
+                """)
+                rows = cur.fetchall()
+                for row in rows:
+                    p_id = str(row["product_id"])
+                    p_name = str(row["product_name"] or "")
+                    p_qty = int(row["purchase_quantity"]) if row["purchase_quantity"] is not None else 0
+                    s_qty = int(row["sold_quantity"]) if row["sold_quantity"] is not None else 0
+                    p_date = str(row["purchase_date"]) if row["purchase_date"] is not None else ""
+                    
+                    u_price = float(row["unit_price"]) if row["unit_price"] is not None else None
+                    c_price = float(row["cost_price"]) if row["cost_price"] is not None else 0.0
+                    
+                    gst_val = row["gst"]
+                    gst_str = f"{float(gst_val):g}%" if gst_val is not None else "5%"
+                    notes = str(row["notes"] or "")
+                    
+                    monthly_json = row["monthly_sold"]
+                    monthly_sold_qty = 0
+                    if isinstance(monthly_json, dict):
+                        monthly_sold_qty = int(monthly_json.get(current_month, 0))
+                    elif isinstance(monthly_json, str):
+                        try:
+                            m_dict = json.loads(monthly_json)
+                            monthly_sold_qty = int(m_dict.get(current_month, 0))
+                        except Exception:
+                            monthly_sold_qty = 0
+                    
+                    products.append({
+                        "id": p_id,
+                        "name": p_name,
+                        "purchase_qty": p_qty,
+                        "sold_qty": s_qty,
+                        "purchase_date": p_date,
+                        "unit_price": u_price,
+                        "notes": notes,
+                        "gst": gst_str,
+                        "cost_price": c_price,
+                        "monthly_sold": monthly_sold_qty
+                    })
+    except Exception as e:
+        app.logger.error(f"Error loading products from Supabase: {e}")
     return products
 
-
-def save_product_excel(name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0):
-    ensure_inventory_excel()
-    wb = load_workbook(INVENTORY_FILE_PATH)
-    ws = wb.active
+def save_product_db(name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0, gst="5%"):
     product_id = str(int(time.time() * 1000))
-    ws.append([product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, "5%", cost_price, "{}"])
-    wb.save(INVENTORY_FILE_PATH)
+    gst_float = parse_gst_float(gst)
+    p_date = purchase_date if (purchase_date and purchase_date.strip()) else None
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO products (
+                    product_id, product_name, purchase_quantity, sold_quantity,
+                    purchase_date, unit_price, cost_price, gst, notes, monthly_sold,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """, (
+                product_id, name, purchase_qty, sold_qty, p_date,
+                unit_price if unit_price is not None else 0.0,
+                cost_price if cost_price is not None else 0.0,
+                gst_float, notes or "", json.dumps({})
+            ))
+        conn.commit()
     return product_id
 
+def update_product_db(product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0, gst="5%"):
+    gst_float = parse_gst_float(gst)
+    p_date = purchase_date if (purchase_date and purchase_date.strip()) else None
 
-def update_product_excel(product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0):
-    ensure_inventory_excel()
-    wb = load_workbook(INVENTORY_FILE_PATH)
-    ws = wb.active
-    found = False
-    for row in ws.iter_rows(min_row=2):
-        if str(row[0].value) == str(product_id):
-            row[1].value = name
-            row[2].value = purchase_qty
-            row[3].value = sold_qty
-            row[4].value = purchase_date
-            row[5].value = unit_price
-            row[6].value = notes
-            row[7].value = "5%"
-            
-            # Ensure columns 9 (Cost Price) and 10 (Monthly Sold JSON) exist
-            if len(row) > 8:
-                row[8].value = cost_price
-            else:
-                ws.cell(row=row[0].row, column=9, value=cost_price)
-
-            found = True
-            break
-    wb.save(INVENTORY_FILE_PATH)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE products
+                SET product_name = %s,
+                    purchase_quantity = %s,
+                    sold_quantity = %s,
+                    purchase_date = %s,
+                    unit_price = %s,
+                    cost_price = %s,
+                    gst = %s,
+                    notes = %s,
+                    updated_at = NOW()
+                WHERE product_id = %s
+            """, (
+                name, purchase_qty, sold_qty, p_date,
+                unit_price if unit_price is not None else 0.0,
+                cost_price if cost_price is not None else 0.0,
+                gst_float, notes or "", product_id
+            ))
+            found = (cur.rowcount > 0)
+        conn.commit()
     return found
 
-
-def delete_product_excel(product_id):
-    ensure_inventory_excel()
-    wb = load_workbook(INVENTORY_FILE_PATH)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    ws.delete_rows(1, ws.max_row)
-    ws.append(["Product ID", "Product Name", "Purchase Quantity", "Sold Quantity", "Purchase Date", "Unit Price", "Notes", "GST", "Cost Price", "Monthly Sold JSON"])
-    deleted = False
-    for r in rows[1:]:
-        if r[0] is not None:
-            if str(r[0]) != str(product_id):
-                ws.append(r)
-            else:
-                deleted = True
-    wb.save(INVENTORY_FILE_PATH)
+def delete_product_db(product_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM products WHERE product_id = %s", (product_id,))
+            deleted = (cur.rowcount > 0)
+        conn.commit()
     return deleted
-
 
 def validate_product_data(data):
     name = data.get("name")
@@ -276,81 +302,88 @@ def validate_product_data(data):
 
     return True, ""
 
-
 # =============================
-# Inventory Integration Helpers
+# Inventory Stock Transaction Helpers
 # =============================
-
-def update_sold_qty_by_name(product_name, delta):
+def apply_inventory_deltas_in_db(cur, item_deltas):
     """
-    Update sold_qty and monthly_sold for a product matched by name (case-insensitive).
-    delta > 0 : increase sold qty (bill generated — stock decreases)
-    delta < 0 : decrease sold qty (bill deleted/reverted — stock restored)
+    item_deltas: dict of { product_name_lower: delta_int }
+    Modifies sold_quantity and monthly_sold using an active cursor within a database transaction.
     """
-    ensure_inventory_excel()
-    wb = load_workbook(INVENTORY_FILE_PATH)
-    ws = wb.active
+    if not item_deltas:
+        return
     current_month = time.strftime("%Y-%m")
-    for row in ws.iter_rows(min_row=2):
-        if row[1].value and str(row[1].value).strip().lower() == str(product_name).strip().lower():
-            current_sold = int(row[3].value) if row[3].value is not None else 0
-            purchase_qty = int(row[2].value) if row[2].value is not None else 0
-            new_sold = current_sold + delta
-            new_sold = max(0, new_sold)           # never go below 0
-            new_sold = min(new_sold, purchase_qty) # never exceed purchased
-            row[3].value = new_sold
 
-            # Update monthly sold JSON
-            monthly_json_str = str(row[9].value) if len(row) > 9 and row[9].value is not None else "{}"
-            monthly_dict = {}
-            try:
-                monthly_dict = json.loads(monthly_json_str)
-            except Exception:
-                monthly_dict = {}
-            
-            cur_month_val = int(monthly_dict.get(current_month, 0))
-            new_month_val = max(0, cur_month_val + delta)
-            monthly_dict[current_month] = new_month_val
+    for name_lower, delta in item_deltas.items():
+        cur.execute("""
+            SELECT product_id, purchase_quantity, sold_quantity, monthly_sold
+            FROM products
+            WHERE LOWER(TRIM(product_name)) = %s
+            FOR UPDATE
+        """, (name_lower,))
+        row = cur.fetchone()
+        if row:
+            p_id, purchase_qty, current_sold, monthly_json = row
+            purchase_qty = purchase_qty or 0
+            current_sold = current_sold or 0
 
-            if len(row) > 9:
-                row[9].value = json.dumps(monthly_dict)
+            new_sold = max(0, current_sold + delta)
+            new_sold = min(new_sold, purchase_qty)
+
+            if isinstance(monthly_json, dict):
+                m_dict = monthly_json
+            elif isinstance(monthly_json, str):
+                try:
+                    m_dict = json.loads(monthly_json)
+                except Exception:
+                    m_dict = {}
             else:
-                ws.cell(row=row[0].row, column=10, value=json.dumps(monthly_dict))
+                m_dict = {}
 
-            wb.save(INVENTORY_FILE_PATH)
-            return True
-    return False
+            cur_month_val = int(m_dict.get(current_month, 0))
+            new_month_val = max(0, cur_month_val + delta)
+            m_dict[current_month] = new_month_val
 
+            cur.execute("""
+                UPDATE products
+                SET sold_quantity = %s,
+                    monthly_sold = %s,
+                    updated_at = NOW()
+                WHERE product_id = %s
+            """, (new_sold, json.dumps(m_dict), p_id))
 
-def deduct_inventory(bill_items_json):
-    """Deduct sold quantities from inventory based on bill items JSON string."""
-    if not bill_items_json:
-        return
+# =============================
+# Supabase DB Invoice Functions
+# =============================
+def load_invoices():
+    invoices = []
     try:
-        items = json.loads(bill_items_json)
-        for item in items:
-            name = item.get("name", "")
-            qty = int(float(item.get("qty", 0)))
-            if name and qty > 0:
-                update_sold_qty_by_name(name, qty)
-    except Exception:
-        pass
-
-
-def revert_inventory(bill_items_json):
-    """Restore sold quantities to inventory (reverse of deduct_inventory)."""
-    if not bill_items_json:
-        return
-    try:
-        items = json.loads(bill_items_json)
-        for item in items:
-            name = item.get("name", "")
-            qty = int(float(item.get("qty", 0)))
-            if name and qty > 0:
-                update_sold_qty_by_name(name, -qty)
-    except Exception:
-        pass
-
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT invoice_id, file_name, html_data, bill_items, status
+                    FROM invoices
+                    WHERE status NOT IN ('Cancelled', 'Deleted')
+                    ORDER BY created_at DESC
+                """)
+                rows = cur.fetchall()
+                for r in rows:
+                    b_items = r["bill_items"]
+                    if isinstance(b_items, (dict, list)):
+                        b_items_str = json.dumps(b_items)
+                    else:
+                        b_items_str = str(b_items or "")
+                    
+                    invoices.append({
+                        "id": str(r["invoice_id"]),
+                        "name": str(r["file_name"] or ""),
+                        "data": str(r["html_data"] or ""),
+                        "bill_items": b_items_str,
+                        "status": str(r["status"] or "Active")
+                    })
+    except Exception as e:
+        app.logger.error(f"Error loading invoices from Supabase: {e}")
+    return invoices
 
 # =============================
 # Routes
@@ -360,107 +393,293 @@ def revert_inventory(bill_items_json):
 def index():
     return render_template("index.html")
 
-
 # Get all invoices (sidebar)
 @app.route("/get-invoices")
 def get_invoices():
     invoices = load_invoices()
     return jsonify(invoices)
 
-
 # Get one invoice
 @app.route("/get-invoice/<invoice_id>")
 def get_invoice(invoice_id):
-    ensure_excel()
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if str(row[0]) == str(invoice_id):
-            return jsonify({
-                "id": row[0],
-                "name": row[1],
-                "data": row[2],
-                "bill_items": row[3] if len(row) > 3 and row[3] else "",
-                "status": row[4] if len(row) > 4 and row[4] else "Active"
-            })
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT invoice_id, file_name, html_data, bill_items, status
+                    FROM invoices
+                    WHERE invoice_id = %s
+                """, (str(invoice_id),))
+                r = cur.fetchone()
+                if r:
+                    b_items = r["bill_items"]
+                    if isinstance(b_items, (dict, list)):
+                        b_items_str = json.dumps(b_items)
+                    else:
+                        b_items_str = str(r["bill_items"] or "")
+                    return jsonify({
+                        "id": str(r["invoice_id"]),
+                        "name": str(r["file_name"] or ""),
+                        "data": str(r["html_data"] or ""),
+                        "bill_items": b_items_str,
+                        "status": str(r["status"] or "Active")
+                    })
+    except Exception as e:
+        app.logger.error(f"Error getting invoice {invoice_id}: {e}")
     return jsonify({"data": ""})
 
-
-# Cancel invoice
+# Cancel invoice (uses single DB transaction for status update + inventory restore)
 @app.route("/cancel-invoice", methods=["POST"])
 def cancel_invoice():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     cancel_id = data.get("id")
+    if not cancel_id:
+        return jsonify({"success": False, "error": "Missing invoice ID"}), 400
 
-    # Revert inventory before deleting the bill
-    old_items_json = get_invoice_bill_items(cancel_id)
-    if old_items_json:
-        revert_inventory(old_items_json)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT bill_items FROM invoices WHERE invoice_id = %s FOR UPDATE", (str(cancel_id),))
+            row = cur.fetchone()
+            if row and row[0]:
+                old_items = extract_items_list(row[0])
+                old_deltas = {}
+                for item in old_items:
+                    name = item.get("name", "").strip().lower()
+                    qty = int(float(item.get("qty", 0)))
+                    if name and qty > 0:
+                        old_deltas[name] = old_deltas.get(name, 0) - qty
+                apply_inventory_deltas_in_db(cur, old_deltas)
 
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
+            cur.execute("UPDATE invoices SET status = 'Cancelled', updated_at = NOW() WHERE invoice_id = %s", (str(cancel_id),))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"Error cancelling invoice {cancel_id}: {e}")
+        return jsonify({"success": False, "error": f"Error cancelling invoice: {str(e)}"}), 400
+    finally:
+        conn.close()
 
-    ws.delete_rows(1, ws.max_row)
-    ws.append(["Invoice ID", "File Name", "HTML Data", "Bill Items JSON", "Status"])
+    return jsonify({"success": True, "message": "Invoice cancelled"})
 
-    for r in rows[1:]:
-        if r[0] is not None:
-            if str(r[0]) != str(cancel_id):
-                row_list = list(r)
-                while len(row_list) < 5:
-                    row_list.append("")
-                ws.append(row_list)
-
-    wb.save(FILE_PATH)
-    return jsonify({"message": "Invoice cancelled"})
-
-
-# Save new invoice
+# Save new invoice (uses single DB transaction for product validation + invoice insert + stock deduction)
 @app.route("/save", methods=["POST"])
 def save():
-    data = request.json
-    file_name = data.get("name")
-    html_data = data.get("data")
+    data = request.get_json(silent=True) or {}
+    file_name = data.get("name", "Untitled Bill")
+    html_data = data.get("data", "")
     bill_items = data.get("bill_items", [])
-    bill_items_json = json.dumps(bill_items)
+    payment_method = data.get("payment_method", "Cash")
 
-    invoice_id = save_invoice(file_name, html_data, bill_items_json)
-    deduct_inventory(bill_items_json)  # auto-deduct stock
+    if not bill_items or not isinstance(bill_items, list):
+        if isinstance(bill_items, str):
+            try:
+                bill_items = json.loads(bill_items)
+            except Exception:
+                bill_items = []
+
+    if not bill_items:
+        return jsonify({"success": False, "error": "No valid products in bill"}), 400
+
+    payload = {
+        "payment_method": payment_method,
+        "items": bill_items
+    }
+    bill_items_json = json.dumps(payload)
+
+    invoice_id = str(int(time.time() * 1000))
+    cust_name, cust_phone = extract_customer_info(html_data)
+    subtotal, gst_total, grand_total = calculate_bill_totals(bill_items)
+    today_date = time.strftime("%Y-%m-%d")
+    now_time = time.strftime("%H:%M:%S")
+
+    deltas = {}
+    for item in bill_items:
+        name = item.get("name", "").strip()
+        qty = int(float(item.get("qty", 0)))
+        if name and qty > 0:
+            deltas[name.lower()] = deltas.get(name.lower(), 0) + qty
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # Step 1: Validate Product Existence and Stock in Supabase products table
+            for name_lower, req_qty in deltas.items():
+                cur.execute("""
+                    SELECT product_name, purchase_quantity, sold_quantity
+                    FROM products
+                    WHERE LOWER(TRIM(product_name)) = %s
+                    FOR UPDATE
+                """, (name_lower,))
+                row = cur.fetchone()
+                if not row:
+                    conn.rollback()
+                    print(f"--> [SAVE REJECTED] Product '{name_lower}' does not exist in Supabase products table.")
+                    return jsonify({"success": False, "error": f"Product '{name_lower}' does not exist in inventory."}), 400
+
+                p_real_name, p_qty, s_qty = row
+                p_qty = p_qty or 0
+                s_qty = s_qty or 0
+                available_stock = p_qty - s_qty
+
+                if req_qty > available_stock:
+                    conn.rollback()
+                    print(f"--> [SAVE REJECTED] Insufficient stock for '{p_real_name}'. Available: {available_stock}, Requested: {req_qty}")
+                    return jsonify({"success": False, "error": f"Insufficient stock for '{p_real_name}'. Available: {available_stock}, Requested: {req_qty}"}), 400
+
+            # Step 2: Insert invoice into Supabase invoices table
+            cur.execute("""
+                INSERT INTO invoices (
+                    invoice_id, file_name, html_data, bill_items, payment_method,
+                    customer_name, customer_phone, subtotal, gst_total, grand_total,
+                    status, bill_date, bill_time, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """, (
+                invoice_id, file_name, html_data, bill_items_json, payment_method,
+                cust_name, cust_phone, subtotal, gst_total, grand_total,
+                "Active", today_date, now_time
+            ))
+
+            # Step 3: Deduct product stock within the SAME transaction
+            apply_inventory_deltas_in_db(cur, deltas)
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("\n" + "=" * 60)
+        print("CRITICAL EXCEPTION IN POST /save:")
+        traceback.print_exc()
+        print("=" * 60 + "\n")
+        app.logger.error(f"Error saving invoice to Supabase: {e}", exc_info=True)
+        return jsonify({"success": False, "error": f"Database transaction failed: {str(e)}"}), 400
+    finally:
+        conn.close()
 
     return jsonify({
+        "success": True,
         "message": "Invoice saved",
         "invoice_id": invoice_id
     })
 
-
-# Update invoice
+# Update invoice (uses single DB transaction for old stock revert + invoice update + new stock deduction)
 @app.route("/update-invoice", methods=["POST"])
 def update_invoice():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     invoice_id = data.get("id")
-    file_name = data.get("name")
-    html_data = data.get("data")
+    if not invoice_id:
+        return jsonify({"success": False, "error": "Missing invoice ID for update"}), 400
+
+    file_name = data.get("name", "")
+    html_data = data.get("data", "")
     bill_items = data.get("bill_items", [])
-    new_bill_items_json = json.dumps(bill_items)
+    payment_method = data.get("payment_method", "Cash")
 
-    # Revert old inventory quantities first
-    old_items_json = get_invoice_bill_items(invoice_id)
-    if old_items_json:
-        revert_inventory(old_items_json)
+    if not bill_items or not isinstance(bill_items, list):
+        if isinstance(bill_items, str):
+            try:
+                bill_items = json.loads(bill_items)
+            except Exception:
+                bill_items = []
 
-    # Save updated invoice
-    update_invoice_excel(invoice_id, file_name, html_data, new_bill_items_json)
+    payload = {
+        "payment_method": payment_method,
+        "items": bill_items
+    }
+    new_bill_items_json = json.dumps(payload)
+    cust_name, cust_phone = extract_customer_info(html_data)
+    subtotal, gst_total, grand_total = calculate_bill_totals(bill_items)
 
-    # Apply new inventory deductions
-    deduct_inventory(new_bill_items_json)
+    new_deltas = {}
+    for item in bill_items:
+        name = item.get("name", "").strip()
+        qty = int(float(item.get("qty", 0)))
+        if name and qty > 0:
+            new_deltas[name.lower()] = new_deltas.get(name.lower(), 0) + qty
 
-    return jsonify({"message": "Invoice updated"})
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT bill_items FROM invoices WHERE invoice_id = %s FOR UPDATE", (str(invoice_id),))
+            row = cur.fetchone()
+            old_deltas = {}
+            if row and row[0]:
+                old_items = extract_items_list(row[0])
+                for item in old_items:
+                    name = item.get("name", "").strip().lower()
+                    qty = int(float(item.get("qty", 0)))
+                    if name and qty > 0:
+                        old_deltas[name] = old_deltas.get(name, 0) - qty
 
+            # Validate Product Existence and Available Stock
+            for name_lower, req_qty in new_deltas.items():
+                cur.execute("""
+                    SELECT product_name, purchase_quantity, sold_quantity
+                    FROM products
+                    WHERE LOWER(TRIM(product_name)) = %s
+                    FOR UPDATE
+                """, (name_lower,))
+                p_row = cur.fetchone()
+                if not p_row:
+                    conn.rollback()
+                    return jsonify({"success": False, "error": f"Product '{name_lower}' does not exist in inventory."}), 400
+
+                p_real_name, p_qty, s_qty = p_row
+                p_qty = p_qty or 0
+                s_qty = s_qty or 0
+                reverted_qty = abs(old_deltas.get(name_lower, 0))
+                effective_available = (p_qty - s_qty) + reverted_qty
+
+                if req_qty > effective_available:
+                    conn.rollback()
+                    return jsonify({"success": False, "error": f"Insufficient stock for '{p_real_name}'. Available: {effective_available}, Requested: {req_qty}"}), 400
+
+            # 1. Revert old stock
+            if old_deltas:
+                apply_inventory_deltas_in_db(cur, old_deltas)
+
+            # 2. Update invoice
+            cur.execute("""
+                UPDATE invoices
+                SET file_name = %s,
+                    html_data = %s,
+                    bill_items = %s,
+                    payment_method = %s,
+                    customer_name = %s,
+                    customer_phone = %s,
+                    subtotal = %s,
+                    gst_total = %s,
+                    grand_total = %s,
+                    updated_at = NOW()
+                WHERE invoice_id = %s
+            """, (
+                file_name, html_data, new_bill_items_json, payment_method,
+                cust_name, cust_phone, subtotal, gst_total, grand_total,
+                str(invoice_id)
+            ))
+
+            # 3. Deduct new stock
+            apply_inventory_deltas_in_db(cur, new_deltas)
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("\n" + "=" * 60)
+        print(f"CRITICAL EXCEPTION IN POST /update-invoice FOR ID {invoice_id}:")
+        traceback.print_exc()
+        print("=" * 60 + "\n")
+        app.logger.error(f"Error updating invoice {invoice_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": f"Database transaction failed: {str(e)}"}), 400
+    finally:
+        conn.close()
+
+    return jsonify({"success": True, "message": "Invoice updated"})
 
 # PDF relay (used for printing)
 @app.route("/pdf-action", methods=["POST"])
 def pdf_action():
+    if "file" not in request.files:
+        return jsonify({"success": False, "error": "No file provided"}), 400
     file = request.files["file"]
     pdf_bytes = file.read()
     return send_file(
@@ -470,53 +689,52 @@ def pdf_action():
         download_name="invoice.pdf"
     )
 
-
 @app.route("/rename-invoice", methods=["POST"])
 def rename_invoice():
-    data = request.json
-    old_id = data["old_id"]
-    new_id = data["new_id"]
+    data = request.get_json(silent=True) or {}
+    old_id = data.get("old_id")
+    new_id = data.get("new_id")
+    if not old_id or not new_id:
+        return jsonify({"success": False, "error": "Missing parameters"}), 400
 
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-
-    for row in ws.iter_rows(min_row=2):
-        if str(row[0].value) == old_id:
-            row[0].value = new_id
-            break
-
-    wb.save(FILE_PATH)
-    return jsonify({"message": "Renamed"})
-
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE invoices SET invoice_id = %s, updated_at = NOW() WHERE invoice_id = %s", (str(new_id), str(old_id)))
+        conn.commit()
+    return jsonify({"success": True, "message": "Renamed"})
 
 @app.route("/delete-invoice", methods=["POST"])
 def delete_invoice():
-    data = request.json
-    delete_id = data["id"]
+    data = request.get_json(silent=True) or {}
+    delete_id = data.get("id")
+    if not delete_id:
+        return jsonify({"success": False, "error": "Missing invoice ID"}), 400
 
-    # Revert inventory before deleting the bill
-    old_items_json = get_invoice_bill_items(delete_id)
-    if old_items_json:
-        revert_inventory(old_items_json)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT bill_items FROM invoices WHERE invoice_id = %s FOR UPDATE", (str(delete_id),))
+            row = cur.fetchone()
+            if row and row[0]:
+                old_items = extract_items_list(row[0])
+                old_deltas = {}
+                for item in old_items:
+                    name = item.get("name", "").strip().lower()
+                    qty = int(float(item.get("qty", 0)))
+                    if name and qty > 0:
+                        old_deltas[name] = old_deltas.get(name, 0) - qty
+                apply_inventory_deltas_in_db(cur, old_deltas)
 
-    wb = load_workbook(FILE_PATH)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
+            cur.execute("UPDATE invoices SET status = 'Deleted', updated_at = NOW() WHERE invoice_id = %s", (str(delete_id),))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"Error deleting invoice {delete_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "error": f"Database transaction failed: {str(e)}"}), 400
+    finally:
+        conn.close()
 
-    ws.delete_rows(1, ws.max_row)
-    ws.append(["Invoice ID", "File Name", "HTML Data", "Bill Items JSON", "Status"])
-
-    for r in rows[1:]:
-        if r[0] is not None:
-            if str(r[0]) != str(delete_id):
-                row_list = list(r)
-                while len(row_list) < 5:
-                    row_list.append("")
-                ws.append(row_list)
-
-    wb.save(FILE_PATH)
-    return jsonify({"message": "Deleted"})
-
+    return jsonify({"success": True, "message": "Deleted"})
 
 # =============================
 # Inventory Routes
@@ -526,11 +744,9 @@ def delete_invoice():
 def inventory_page():
     return render_template("inventory.html")
 
-
 @app.route("/get-products")
 def get_products():
     return jsonify(load_products())
-
 
 @app.route("/get-product-names")
 def get_product_names():
@@ -544,17 +760,17 @@ def get_product_names():
             "name": p["name"],
             "available_qty": available,
             "unit_price": p["unit_price"],
+            "cost_price": p["cost_price"],
             "gst": p["gst"]
         })
     return jsonify(result)
 
-
 @app.route("/save-product", methods=["POST"])
 def save_product_route():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     is_valid, msg = validate_product_data(data)
     if not is_valid:
-        return jsonify({"success": False, "message": msg}), 400
+        return jsonify({"success": False, "error": msg}), 400
 
     name = str(data.get("name")).strip()
     purchase_qty = int(data.get("purchase_qty"))
@@ -571,21 +787,21 @@ def save_product_route():
     else:
         cost_price = 0.0
     notes = str(data.get("notes", ""))
+    gst = str(data.get("gst", "5%")).strip()
 
-    product_id = save_product_excel(name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price)
+    product_id = save_product_db(name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price, gst)
     return jsonify({"success": True, "message": "Product saved successfully", "product_id": product_id})
-
 
 @app.route("/update-product", methods=["POST"])
 def update_product_route():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     is_valid, msg = validate_product_data(data)
     if not is_valid:
-        return jsonify({"success": False, "message": msg}), 400
+        return jsonify({"success": False, "error": msg}), 400
 
     product_id = data.get("id")
     if not product_id:
-        return jsonify({"success": False, "message": "Product ID is required"}), 400
+        return jsonify({"success": False, "error": "Product ID is required"}), 400
 
     name = str(data.get("name")).strip()
     purchase_qty = int(data.get("purchase_qty"))
@@ -602,32 +818,190 @@ def update_product_route():
     else:
         cost_price = 0.0
     notes = str(data.get("notes", ""))
+    gst = str(data.get("gst", "5%")).strip()
 
-    found = update_product_excel(product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price)
+    found = update_product_db(product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price, gst)
     if found:
         return jsonify({"success": True, "message": "Product updated successfully"})
     else:
-        return jsonify({"success": False, "message": "Product not found"}), 404
-
+        return jsonify({"success": False, "error": "Product not found"}), 404
 
 @app.route("/delete-product", methods=["POST"])
 def delete_product_route():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     product_id = data.get("id")
     if not product_id:
-        return jsonify({"success": False, "message": "Product ID is required"}), 400
+        return jsonify({"success": False, "error": "Product ID is required"}), 400
 
-    deleted = delete_product_excel(product_id)
+    deleted = delete_product_db(product_id)
     if deleted:
         return jsonify({"success": True, "message": "Product deleted successfully"})
     else:
-        return jsonify({"success": False, "message": "Product not found"}), 404
+        return jsonify({"success": False, "error": "Product not found"}), 404
 
+# =============================
+# History Routes
+# =============================
+
+@app.route("/history")
+def history_page():
+    return render_template("history.html")
+
+@app.route("/get-history-data")
+def get_history_data():
+    invoices = load_invoices()
+    products = load_products()
+
+    prod_map = {}
+    for p in products:
+        prod_map[p["name"].strip().lower()] = p
+
+    today_str = time.strftime("%Y-%m-%d")
+    current_month_str = time.strftime("%Y-%m")
+    target_month_str = request.args.get("month", current_month_str).strip()
+
+    month_sold_products = []
+
+    daily_total_bills = 0
+    daily_qty_sold = 0
+    daily_sales_amount = 0.0
+    daily_gst_collected = 0.0
+    daily_profit = 0.0
+
+    monthly_total_bills = 0
+    monthly_total_sales = 0.0
+    monthly_qty_sold = 0
+    monthly_total_profit = 0.0
+    monthly_gst_collected = 0.0
+
+    product_monthly_stats = {}
+
+    for inv in invoices:
+        if inv.get("status") in ("Cancelled", "Deleted"):
+            continue
+
+        inv_id = str(inv.get("id"))
+        try:
+            ts = float(inv_id) / 1000.0
+            inv_date = time.strftime("%Y-%m-%d", time.localtime(ts))
+            inv_display_date = time.strftime("%d/%m/%Y", time.localtime(ts))
+            inv_month = time.strftime("%Y-%m", time.localtime(ts))
+        except Exception:
+            inv_date = today_str
+            inv_display_date = time.strftime("%d/%m/%Y")
+            inv_month = current_month_str
+
+        items = []
+        payment_method = "Cash"
+        b_json = inv.get("bill_items", "")
+        if b_json:
+            try:
+                if isinstance(b_json, (dict, list)):
+                    parsed_b = b_json
+                else:
+                    parsed_b = json.loads(b_json)
+                if isinstance(parsed_b, dict):
+                    payment_method = parsed_b.get("payment_method", "Cash")
+                    items = parsed_b.get("items", [])
+                elif isinstance(parsed_b, list):
+                    items = parsed_b
+            except Exception:
+                items = []
+
+        is_today = (inv_date == today_str)
+        is_target_month = (inv_month == target_month_str)
+
+        if is_today:
+            daily_total_bills += 1
+
+        if is_target_month:
+            monthly_total_bills += 1
+
+        for item in items:
+            name = item.get("name", "").strip()
+            qty = int(float(item.get("qty", 0)))
+            if not name or qty <= 0:
+                continue
+
+            rate = float(item.get("rate", 0))
+            gst_str = str(item.get("gst", ""))
+
+            matched_p = prod_map.get(name.lower(), {})
+            if rate == 0 and matched_p:
+                rate = float(matched_p.get("unit_price") or 0)
+
+            if not gst_str and matched_p:
+                gst_str = matched_p.get("gst", "5%")
+            elif not gst_str:
+                gst_str = "5%"
+
+            try:
+                gst_pct = float(gst_str.replace("%", "").strip())
+            except Exception:
+                gst_pct = 5.0
+
+            cost_price = float(item.get("cost_price", 0))
+            if cost_price == 0 and matched_p:
+                cost_price = float(matched_p.get("cost_price") or 0)
+
+            subtotal = rate * qty
+            gst_val = subtotal * (gst_pct / 100.0)
+            total_amt = subtotal + gst_val
+            item_profit = (rate - cost_price) * qty
+
+            if is_today:
+                daily_qty_sold += qty
+                daily_sales_amount += total_amt
+                daily_gst_collected += gst_val
+                daily_profit += item_profit
+
+            if is_target_month:
+                month_sold_products.append({
+                    "date": inv_display_date,
+                    "product_name": name,
+                    "quantity": qty,
+                    "selling_price": rate,
+                    "gst_pct": f"{gst_pct:g}%",
+                    "total_amount": total_amt,
+                    "payment_method": payment_method
+                })
+                monthly_total_sales += total_amt
+                monthly_qty_sold += qty
+                monthly_gst_collected += gst_val
+                monthly_total_profit += item_profit
+
+                if name not in product_monthly_stats:
+                    product_monthly_stats[name] = {"name": name, "qty": 0, "profit": 0.0}
+                product_monthly_stats[name]["qty"] += qty
+                product_monthly_stats[name]["profit"] += item_profit
+
+    product_monthly_sales_list = list(product_monthly_stats.values())
+    product_monthly_sales_list.sort(key=lambda x: x["qty"], reverse=True)
+
+    return jsonify({
+        "target_month": target_month_str,
+        "today_sold_products": month_sold_products,
+        "daily_summary": {
+            "total_bills": daily_total_bills,
+            "total_qty": daily_qty_sold,
+            "daily_sales_amount": daily_sales_amount,
+            "daily_gst_collected": daily_gst_collected,
+            "daily_profit": daily_profit
+        },
+        "monthly_summary": {
+            "total_sales": monthly_total_sales,
+            "total_qty": monthly_qty_sold,
+            "total_profit": monthly_total_profit,
+            "total_gst_collected": monthly_gst_collected,
+            "total_bills": monthly_total_bills,
+            "total_unique_products": len(product_monthly_stats)
+        },
+        "product_monthly_sales": product_monthly_sales_list
+    })
 
 # =============================
 # Start Flask Server
 # =============================
-
 def start_flask():
     app.run(
         host="127.0.0.1",
@@ -635,15 +1009,9 @@ def start_flask():
         debug=False
     )
 
-# =============================
-# Auto Open Browser
-# =============================
 def open_browser():
     webbrowser.open("http://127.0.0.1:5000/")
 
 if __name__ == "__main__":
     threading.Timer(1.5, open_browser).start()
     app.run(host="127.0.0.1", port=5000, debug=False)
-
-
-# py -3.12 -m PyInstaller --onefile --noconsole --add-data "templates;templates" --add-data "static;static" main.py

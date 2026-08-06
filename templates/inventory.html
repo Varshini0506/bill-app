@@ -291,6 +291,7 @@ body {
     <div style="font-family:Brush Script MT;font-weight: 800;font-size: x-large;margin-right: 20px;color: #005703;">Sri Traders</div>
     <button onclick="window.location.href='/'" class="primary-btn">Invoice Billing</button>
     <button class="primary-btn" style="background-color: #6c757d; margin-left: 5px; cursor: default;" disabled>Inventory Management</button>
+    <button onclick="window.location.href='/history'" class="primary-btn" style="background-color: #17a2b8; margin-left: 5px;">History</button>
 </div>
 
 <div class="app-layout">
@@ -317,6 +318,11 @@ body {
             </div>
 
             <div class="form-group">
+                <label for="product-gst">GST (%) <span style="color:red;">*</span></label>
+                <input type="number" step="0.01" id="product-gst" min="0" required placeholder="e.g., 5" value="5">
+            </div>
+
+            <div class="form-group">
                 <label for="product-purchase-qty">Current Stock (Purchased Qty) <span style="color:red;">*</span></label>
                 <input type="number" id="product-purchase-qty" min="0" required placeholder="e.g., 100">
             </div>
@@ -335,12 +341,6 @@ body {
             <div class="form-group">
                 <label for="product-notes">Notes (Optional)</label>
                 <textarea id="product-notes" placeholder="Specifications or description..." rows="2"></textarea>
-            </div>
-
-            <!-- Fixed 5% GST -->
-            <div class="form-group">
-                <label>GST</label>
-                <input type="text" value="5% (Fixed)" disabled style="background: #e9ecef; color: #495057; font-weight: bold;">
             </div>
 
             <div id="validation-error" style="color: #dc3545; font-size: 12px; display: none; font-weight: bold;"></div>
@@ -363,16 +363,16 @@ body {
                     <div id="metric-total-products" class="value" style="color: #1b5e20;">0</div>
                 </div>
                 <div class="summary-card" style="background: #e3f2fd; border: 1px solid #bbdefb;">
-                    <h4 style="color: #1565c0;">Purchased Qty</h4>
-                    <div id="metric-total-purchased" class="value" style="color: #0d47a1;">0</div>
+                    <h4 style="color: #1565c0;">Total Cost Price</h4>
+                    <div id="metric-total-cost-price" class="value" style="color: #0d47a1;">₹ 0.00</div>
                 </div>
                 <div class="summary-card" style="background: #fff3e0; border: 1px solid #ffe0b2;">
                     <h4 style="color: #e65100;">Sold Qty</h4>
                     <div id="metric-total-sold" class="value" style="color: #e65100;">0</div>
                 </div>
                 <div class="summary-card" style="background: #f3e5f5; border: 1px solid #e1bee7;">
-                    <h4 style="color: #6a1b9a;">Available Qty</h4>
-                    <div id="metric-total-remaining" class="value" style="color: #4a148c;">0</div>
+                    <h4 style="color: #6a1b9a;">Total Selling Price</h4>
+                    <div id="metric-total-selling-price" class="value" style="color: #4a148c;">₹ 0.00</div>
                 </div>
                 <div class="summary-card" style="background: #e0f2f1; border: 1px solid #b2dfdb;">
                     <h4 style="color: #00695c;">Total Stock Value</h4>
@@ -408,14 +408,14 @@ body {
                 <table class="inventory-table">
                     <thead>
                         <tr>
-                            <th style="width: 20%;">Product Name</th>
-                            <th style="width: 11%; text-align: right;">Cost Price (₹)</th>
-                            <th style="width: 11%; text-align: right;">Selling Price (₹)</th>
-                            <th style="width: 10%; text-align: right;">Current Stock</th>
-                            <th style="width: 11%; text-align: right;">Available Stock</th>
+                            <th style="width: 22%;">Product Name</th>
+                            <th style="width: 12%; text-align: right;">Cost Price (₹)</th>
+                            <th style="width: 12%; text-align: right;">Selling Price (₹)</th>
+                            <th style="width: 10%; text-align: right;">GST (%)</th>
+                            <th style="width: 11%; text-align: right;">Current Stock</th>
                             <th style="width: 11%; text-align: right;">Monthly Sold</th>
-                            <th style="width: 13%; text-align: right;">Monthly Profit</th>
-                            <th style="width: 13%; text-align: center;">Actions</th>
+                            <th style="width: 12%; text-align: right;">Monthly Profit</th>
+                            <th style="width: 10%; text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="inventory-tbody">
@@ -516,6 +516,8 @@ function applyFiltersAndRender() {
         const sellingPriceVal = p.unit_price !== null && p.unit_price !== undefined ? parseFloat(p.unit_price) : 0;
         const formattedSellingPrice = `₹ ${sellingPriceVal.toFixed(2)}`;
         
+        const gstDisplay = p.gst || "5%";
+
         const monthlySold = p.monthly_sold || 0;
         const profitPerUnit = sellingPriceVal - costPriceVal;
         const monthlyProfit = profitPerUnit * monthlySold;
@@ -531,10 +533,8 @@ function applyFiltersAndRender() {
             </td>
             <td style="text-align: right; color: #555;">${formattedCostPrice}</td>
             <td style="font-weight: bold; text-align: right; color: #005703;">${formattedSellingPrice}</td>
-            <td style="text-align: right;">${p.purchase_qty}</td>
-            <td style="font-weight: bold; text-align: right;">
-                ${remaining} ${badge}
-            </td>
+            <td style="font-weight: bold; text-align: right; color: #007bff;">${escapeHtml(gstDisplay)}</td>
+            <td style="text-align: right;">${p.purchase_qty} ${badge}</td>
             <td style="font-weight: bold; text-align: right; color: #e65100;">${monthlySold}</td>
             <td style="font-weight: bold; text-align: right; color: ${monthlyProfit >= 0 ? '#28a745' : '#dc3545'};">${formattedMonthlyProfit}</td>
             <td class="actions-cell" style="justify-content: center;">
@@ -560,19 +560,20 @@ function parseDate(dateStr) {
 }
 
 function updateDashboardMetrics() {
-    let totalPurchased = 0;
     let totalSold = 0;
-    let totalRemaining = 0;
+    let grandCostPrice = 0;
+    let grandSellingPrice = 0;
     let grandStockValue = 0;
     let grandMonthlyProfit = 0;
 
     allProducts.forEach(p => {
-        totalPurchased += p.purchase_qty;
         totalSold += p.sold_qty;
         const avail = (p.purchase_qty - p.sold_qty);
-        totalRemaining += avail;
         const sellingPrice = p.unit_price !== null && p.unit_price !== undefined ? parseFloat(p.unit_price) : 0;
         const costPrice = p.cost_price !== null && p.cost_price !== undefined ? parseFloat(p.cost_price) : 0;
+
+        grandCostPrice += (avail * costPrice);
+        grandSellingPrice += (avail * sellingPrice);
         grandStockValue += (avail * sellingPrice);
 
         const mSold = p.monthly_sold || 0;
@@ -580,9 +581,9 @@ function updateDashboardMetrics() {
     });
 
     document.getElementById("metric-total-products").textContent = allProducts.length;
-    document.getElementById("metric-total-purchased").textContent = totalPurchased;
+    document.getElementById("metric-total-cost-price").textContent = "₹ " + grandCostPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("metric-total-selling-price").textContent = "₹ " + grandSellingPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById("metric-total-sold").textContent = totalSold;
-    document.getElementById("metric-total-remaining").textContent = totalRemaining;
     document.getElementById("metric-total-stock-value").textContent = "₹ " + grandStockValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById("metric-total-monthly-profit").textContent = "₹ " + grandMonthlyProfit.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -605,6 +606,11 @@ function startEdit(productId) {
     document.getElementById("product-cost-price").value = product.cost_price !== undefined && product.cost_price !== null ? product.cost_price : "";
     document.getElementById("product-purchase-qty").value = product.purchase_qty;
     
+    const gstElem = document.getElementById("product-gst");
+    if (gstElem) {
+        gstElem.value = (product.gst || "5").replace("%", "");
+    }
+
     document.getElementById("sold-qty-container").style.display = "block";
     document.getElementById("product-sold-qty").value = product.sold_qty;
     document.getElementById("product-sold-qty").required = true;
@@ -627,6 +633,11 @@ function resetForm() {
     document.getElementById("product-cost-price").value = "";
     document.getElementById("product-purchase-qty").value = "";
     
+    const gstElem = document.getElementById("product-gst");
+    if (gstElem) {
+        gstElem.value = "5";
+    }
+
     document.getElementById("sold-qty-container").style.display = "none";
     document.getElementById("product-sold-qty").value = "";
     document.getElementById("product-sold-qty").required = false;
@@ -650,6 +661,7 @@ function onFormSubmit(e) {
     const purchaseQty = parseInt(document.getElementById("product-purchase-qty").value);
     const dateVal = document.getElementById("product-date").value;
     const priceVal = document.getElementById("product-price").value;
+    const gstVal = document.getElementById("product-gst") ? document.getElementById("product-gst").value : "5";
     const notes = document.getElementById("product-notes").value.trim();
 
     let soldQty = 0;
@@ -669,6 +681,11 @@ function onFormSubmit(e) {
     }
     if (costPriceVal !== "" && parseFloat(costPriceVal) < 0) {
         errDiv.textContent = "Cost Price cannot be negative";
+        errDiv.style.display = "block";
+        return;
+    }
+    if (gstVal !== "" && parseFloat(gstVal) < 0) {
+        errDiv.textContent = "GST (%) cannot be negative";
         errDiv.style.display = "block";
         return;
     }
@@ -702,6 +719,7 @@ function onFormSubmit(e) {
         sold_qty: soldQty,
         purchase_date: purchaseDate,
         unit_price: priceVal !== "" ? parseFloat(priceVal) : 0,
+        gst: gstVal !== "" ? (parseFloat(gstVal) + "%") : "5%",
         notes: notes
     };
 
@@ -723,13 +741,17 @@ function onFormSubmit(e) {
             resetForm();
             loadProducts();
         } else {
-            errDiv.textContent = resData.message;
+            errDiv.textContent = resData.error || resData.message || "An error occurred. Please try again.";
             errDiv.style.display = "block";
         }
     })
     .catch(err => {
         console.error("Submit error:", err);
-        errDiv.textContent = "An error occurred. Please try again.";
+        if (err && err.message && (err.message.includes("fetch") || err.message.includes("network") || err.message.includes("Failed"))) {
+            errDiv.textContent = "Cannot reach server. Make sure Flask is running on http://127.0.0.1:5000";
+        } else {
+            errDiv.textContent = err.message || "An error occurred. Please try again.";
+        }
         errDiv.style.display = "block";
     });
 }

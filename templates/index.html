@@ -433,6 +433,7 @@ body {
 
     <button onclick="newBillWithAutoNumber()" class="primary-btn" style="background-color: #17a2b8;">➕ New Bill</button>
     <button onclick="window.location.href='/inventory'" class="primary-btn" style="margin-left: auto;">Inventory Management</button>
+    <button onclick="window.location.href='/history'" class="primary-btn" style="background-color: #17a2b8; margin-left: 5px;">History</button>
 </div>
 
 <div class="app-layout">
@@ -481,6 +482,14 @@ body {
                 class="pos-input" 
                 placeholder="e.g. Hari"
                 oninput="updateCashierOnReceipt(this.value)">
+        </div>
+
+        <div class="pos-field">
+            <label for="posPaymentMethod">Payment Method</label>
+            <select id="posPaymentMethod" class="pos-input" onchange="updatePaymentMethodOnReceipt(this.value)">
+                <option value="Cash" selected>Cash</option>
+                <option value="Online">Online</option>
+            </select>
         </div>
 
         <button type="button" id="posAddBtn" onclick="addProductToBillFromPanel()" class="pos-add-btn">
@@ -577,6 +586,12 @@ async function getNextBillNumber() {
 function updateCashierOnReceipt(name) {
     const cashierEl = document.getElementById("receiptCashier");
     if (cashierEl) cashierEl.innerText = name || "";
+}
+
+// Updates Payment Method on receipt in real-time
+function updatePaymentMethodOnReceipt(method) {
+    const payEl = document.getElementById("paymentMode");
+    if (payEl) payEl.innerText = (method || "Cash").toUpperCase();
 }
 
 // Load inventory product details for billing selection & rate/stock validation
@@ -735,11 +750,29 @@ function validateAndGetProduct(productName, reqQty, currentRowElem = null) {
     );
 
     if (!matched) {
-        // If not in inventory (manual item name), return mock item
-        return { name: productName, available_qty: 999999, unit_price: 0 };
+        alert(`Product '${productName}' does not exist in inventory.`);
+        return null;
     }
 
     const availableStock = parseInt(matched.available_qty) || 0;
+
+    // If editing existing bill, add back current bill's old quantity for this product
+    let extraAvailable = 0;
+    if (currentInvoiceId && window.currentLoadedBillItems) {
+        let oldItems = [];
+        try {
+            let parsed = typeof window.currentLoadedBillItems === 'string' ? JSON.parse(window.currentLoadedBillItems) : window.currentLoadedBillItems;
+            if (Array.isArray(parsed)) oldItems = parsed;
+            else if (parsed && Array.isArray(parsed.items)) oldItems = parsed.items;
+        } catch(e) {}
+        oldItems.forEach(oi => {
+            if (oi.name && oi.name.toLowerCase() === matched.name.toLowerCase()) {
+                extraAvailable += parseInt(oi.qty) || 0;
+            }
+        });
+    }
+
+    const effectiveAvailable = availableStock + extraAvailable;
 
     let existingInBill = 0;
     const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
@@ -757,8 +790,8 @@ function validateAndGetProduct(productName, reqQty, currentRowElem = null) {
 
     const totalNeeded = existingInBill + reqQty;
 
-    if (totalNeeded > availableStock) {
-        alert(`Only ${availableStock} units of ${matched.name} are available in stock.`);
+    if (totalNeeded > effectiveAvailable) {
+        alert(`Only ${effectiveAvailable} units of ${matched.name} are available in stock.`);
         return null;
     }
 
@@ -801,6 +834,8 @@ function addProductToBillFromPanel() {
     });
 
     const unitPrice = parseFloat(matched.unit_price) || 0;
+    const gstStr = matched.gst || "5%";
+    const gstPct = parseFloat(gstStr.replace("%", "").trim()) || 0;
 
     if (existingRow) {
         const qtyCell = existingRow.querySelector('[data-field="quantity"]');
@@ -809,18 +844,17 @@ function addProductToBillFromPanel() {
         qtyCell.innerText = newQty;
         calculateRow(existingRow);
     } else {
-        // Create new clean 5-column row (No trash icons in table!)
         const newRow = document.createElement("tr");
 
         const subtotal = reqQty * unitPrice;
-        const gstAmount = subtotal * 0.05;
+        const gstAmount = subtotal * (gstPct / 100.0);
         const totalAmount = subtotal + gstAmount;
 
         newRow.innerHTML = `
             <td contenteditable="true" data-field="product_name" oninput="onProductNameEdited(this)" style="font-weight:bold; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace; word-break:break-word;">${escapeHtml(matched.name)}</td>
             <td contenteditable="true" data-field="quantity" oninput="onQtyCellEdited(this)" style="font-weight:bold; text-align:center; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${reqQty}</td>
             <td contenteditable="true" data-field="rate" oninput="onRateCellEdited(this)" style="font-weight:bold; text-align:right; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${unitPrice.toFixed(2)}</td>
-            <td data-field="gst" style="font-weight:bold; text-align:center; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">5%</td>
+            <td data-field="gst" style="font-weight:bold; text-align:center; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${escapeHtml(gstStr)}</td>
             <td data-field="amount" class="calc-cell" style="font-weight:bold; text-align:right; font-size:11px; padding:2px 1px; font-family:'Courier New',Courier,monospace;">${totalAmount.toFixed(2)}</td>
         `;
 
@@ -853,10 +887,16 @@ function onProductNameEdited(cell) {
         p => p.name.toLowerCase() === typedName.toLowerCase()
     );
 
-    if (matched && matched.unit_price !== null && matched.unit_price !== undefined) {
-        const rateCell = row.querySelector('[data-field="rate"]');
-        if (rateCell) {
-            rateCell.innerText = parseFloat(matched.unit_price).toFixed(2);
+    if (matched) {
+        if (matched.unit_price !== null && matched.unit_price !== undefined) {
+            const rateCell = row.querySelector('[data-field="rate"]');
+            if (rateCell) {
+                rateCell.innerText = parseFloat(matched.unit_price).toFixed(2);
+            }
+        }
+        const gstCell = row.querySelector('[data-field="gst"]');
+        if (gstCell && matched.gst) {
+            gstCell.innerText = matched.gst;
         }
     }
 
@@ -910,6 +950,14 @@ function removeSelectedRow() {
     calculateGrandTotal();
 }
 
+function getRowGstPercent(row) {
+    const gstCell = row.querySelector('[data-field="gst"]');
+    if (!gstCell) return 5.0;
+    const txt = gstCell.innerText.replace('%', '').trim();
+    const val = parseFloat(txt);
+    return isNaN(val) ? 5.0 : val;
+}
+
 function calculateRow(row) {
     const qtyCell = row.querySelector('[data-field="quantity"]');
     const rateCell = row.querySelector('[data-field="rate"]');
@@ -919,9 +967,10 @@ function calculateRow(row) {
 
     const qty = parseFloat(qtyCell.innerText) || 0;
     const rate = parseFloat(rateCell.innerText) || 0;
+    const gstPct = getRowGstPercent(row);
 
     const subtotal = qty * rate;
-    const gstAmount = subtotal * 0.05;
+    const gstAmount = subtotal * (gstPct / 100.0);
     const totalAmount = subtotal + gstAmount;
 
     amountCell.innerText = totalAmount.toFixed(2);
@@ -958,9 +1007,10 @@ function calculateGst() {
 
         const qty = parseFloat(qtyCell ? qtyCell.innerText : 0) || 0;
         const rate = parseFloat(rateCell ? rateCell.innerText : 0) || 0;
+        const gstPct = getRowGstPercent(row);
 
         const subtotal = qty * rate;
-        const gstAmount = subtotal * 0.05;
+        const gstAmount = subtotal * (gstPct / 100.0);
 
         totalTaxable += subtotal;
         totalTax += gstAmount;
@@ -992,9 +1042,10 @@ function calculateGrandTotal() {
 
         const qty = parseFloat(qtyCell ? qtyCell.innerText : 0) || 0;
         const rate = parseFloat(rateCell ? rateCell.innerText : 0) || 0;
+        const gstPct = getRowGstPercent(row);
 
         const subtotal = qty * rate;
-        const gstAmount = subtotal * 0.05;
+        const gstAmount = subtotal * (gstPct / 100.0);
         const lineAmount = subtotal + gstAmount;
 
         totals.quantity += qty;
@@ -1142,8 +1193,15 @@ async function printPage() {
     };
 }
 
+let isSavingBill = false;
+
 async function saveData() {
+    if (isSavingBill) return;
+
     await loadProductNames();
+
+    const saveBtn = document.getElementById("save-btn");
+    const originalBtnText = saveBtn ? saveBtn.innerText : "💾 Save Bill";
 
     const rows = document.querySelectorAll("#invoice-body tr:not(#filler-row)");
     const billItems = [];
@@ -1162,10 +1220,24 @@ async function saveData() {
 
         const qtyCell = row.querySelector('[data-field="quantity"]');
         const qty = qtyCell ? (parseInt(qtyCell.innerText) || 0) : 0;
+        const rateCell = row.querySelector('[data-field="rate"]');
+        const rate = rateCell ? (parseFloat(rateCell.innerText) || 0) : 0;
+        const gstCell = row.querySelector('[data-field="gst"]');
+        const gstStr = gstCell ? gstCell.innerText.trim() : "5%";
 
         if (productName && qty > 0) {
             billQtyMap[productName] = (billQtyMap[productName] || 0) + qty;
-            billItems.push({ name: productName, qty: qty });
+
+            const matchedP = (window.inventoryProducts || []).find(p => p.name.toLowerCase() === productName.toLowerCase());
+            const costPrice = matchedP ? (matchedP.cost_price || 0) : 0;
+
+            billItems.push({
+                name: productName,
+                qty: qty,
+                rate: rate,
+                gst: gstStr,
+                cost_price: costPrice
+            });
         }
     }
 
@@ -1174,18 +1246,60 @@ async function saveData() {
         return;
     }
 
+    const payMethodSelect = document.getElementById("posPaymentMethod");
+    const selectedPayMethod = payMethodSelect ? payMethodSelect.value : "Cash";
+
+    // Ensure payment method is written to thermal receipt before cloning
+    updatePaymentMethodOnReceipt(selectedPayMethod);
+
     // Validate Stock Availability before saving
     for (let prodName in billQtyMap) {
         const reqQty = billQtyMap[prodName];
         const matched = (window.inventoryProducts || []).find(p => p.name.toLowerCase() === prodName.toLowerCase());
 
         if (matched) {
-            const availableStock = matched.available_qty;
-            if (reqQty > availableStock) {
-                alert(`Only ${availableStock} units of ${matched.name} are available in stock.`);
+            const availableStock = parseInt(matched.available_qty) || 0;
+            let extraAvailable = 0;
+            if (currentInvoiceId && window.currentLoadedBillItems) {
+                let oldItems = [];
+                try {
+                    let parsed = typeof window.currentLoadedBillItems === 'string' ? JSON.parse(window.currentLoadedBillItems) : window.currentLoadedBillItems;
+                    if (Array.isArray(parsed)) oldItems = parsed;
+                    else if (parsed && Array.isArray(parsed.items)) oldItems = parsed.items;
+                } catch(e) {}
+                oldItems.forEach(oi => {
+                    if (oi.name && oi.name.toLowerCase() === matched.name.toLowerCase()) {
+                        extraAvailable += parseInt(oi.qty) || 0;
+                    }
+                });
+            }
+            const effectiveAvailable = availableStock + extraAvailable;
+
+            if (reqQty > effectiveAvailable) {
+                alert(`Only ${effectiveAvailable} units of ${matched.name} are available in stock.`);
                 return;
             }
         }
+    }
+
+    let saveName = currentFileName;
+    if (!currentInvoiceId) {
+        const invoiceNoEl = document.getElementById("invoiceNo");
+        const autoNo = invoiceNoEl ? invoiceNoEl.innerText.trim() : "";
+        const defaultName = autoNo ? ("Bill-" + autoNo) : ("Bill-" + Date.now());
+
+        const inputName = prompt("Enter Invoice Name / Number", defaultName);
+        if (inputName === null) {
+            // User cancelled prompt
+            return;
+        }
+        saveName = inputName.trim() || defaultName;
+    }
+
+    isSavingBill = true;
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerText = "⏳ Saving...";
     }
 
     // Clean HTML for saving (Completely remove trash icons / action cells!)
@@ -1198,45 +1312,52 @@ async function saveData() {
 
     const cleanedHTML = clone.outerHTML;
 
-    if (!currentInvoiceId) {
-        const name = prompt("Enter Invoice Name / Number");
-        if (!name) return;
+    const payload = {
+        name: saveName,
+        data: cleanedHTML,
+        bill_items: billItems,
+        payment_method: selectedPayMethod
+    };
 
-        fetch("/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                name: name,
-                data: cleanedHTML,
-                bill_items: billItems
-            })
-        })
-        .then(res => res.json())
-        .then(result => {
-            currentInvoiceId = result.invoice_id;
-            currentFileName = name;
-            alert("Bill saved successfully.");
-            loadInvoiceList();
-            loadProductNames();
-        });
-    } else {
-        fetch("/update-invoice", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: currentInvoiceId,
-                name: currentFileName,
-                data: cleanedHTML,
-                bill_items: billItems
-            })
-        })
-        .then(res => res.json())
-        .then(result => {
-            alert("Bill saved successfully.");
-            loadInvoiceList();
-            loadProductNames();
-        });
+    let url = "/save";
+    if (currentInvoiceId) {
+        payload.id = currentInvoiceId;
+        url = "/update-invoice";
     }
+
+    fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(async res => {
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok || resData.success === false) {
+            const errMsg = resData.error || resData.message || ("Server response error (Status " + res.status + ")");
+            throw new Error(errMsg);
+        }
+        return resData;
+    })
+    .then(result => {
+        if (result.invoice_id) {
+            currentInvoiceId = result.invoice_id;
+            currentFileName = saveName;
+        }
+        alert("Bill saved successfully.");
+        loadInvoiceList();
+        loadProductNames();
+    })
+    .catch(err => {
+        console.error("Save error:", err);
+        alert("Failed to save bill: " + err.message);
+    })
+    .finally(() => {
+        isSavingBill = false;
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerText = originalBtnText;
+        }
+    });
 }
 
 async function loadInvoiceList() {
@@ -1259,7 +1380,16 @@ async function loadInvoiceList() {
 
         let custName = "";
         let grandTotal = "";
-        let invoiceNo = inv.name;
+        let paymentMethod = "Cash";
+
+        if (inv.bill_items) {
+            try {
+                let parsed = typeof inv.bill_items === 'string' ? JSON.parse(inv.bill_items) : inv.bill_items;
+                if (parsed && parsed.payment_method) {
+                    paymentMethod = parsed.payment_method;
+                }
+            } catch(e) {}
+        }
 
         if (inv.data) {
             const parser = new DOMParser();
@@ -1268,11 +1398,18 @@ async function loadInvoiceList() {
             if (custElem) custName = custElem.textContent.trim();
             const grandElem = doc.getElementById("grand-amount");
             if (grandElem) grandTotal = grandElem.textContent.trim();
-            const invNoElem = doc.getElementById("invoiceNo");
-            if (invNoElem && invNoElem.textContent.trim()) {
-                invoiceNo = invNoElem.textContent.trim() + " (" + inv.name + ")";
+            const payElem = doc.getElementById("paymentMode");
+            if (payElem && payElem.textContent.trim()) {
+                paymentMethod = payElem.textContent.trim();
             }
         }
+
+        const pmUpper = paymentMethod.toUpperCase();
+        const isOnline = pmUpper === "ONLINE" || pmUpper === "UPI";
+        const badgeStyle = isOnline 
+            ? "background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9;" 
+            : "background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;";
+        const displayPaymentMethod = pmUpper === "UPI" ? "Online" : paymentMethod;
 
         const row = document.createElement("div");
         row.className = "invoice-card";
@@ -1283,6 +1420,7 @@ async function loadInvoiceList() {
                 <div style="font-weight: bold; font-size: 13px; color: #007bff; cursor: pointer;" onclick="viewInvoice('${inv.id}')" title="Click to View">
                     📄 ${escapeHtml(inv.name)}
                 </div>
+                <span style="font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 4px; ${badgeStyle}">${escapeHtml(displayPaymentMethod)}</span>
             </div>
             ${custName ? `<div style="font-size: 11px; color: #555;">Customer: <b>${escapeHtml(custName)}</b></div>` : ''}
             ${grandTotal ? `<div style="font-size: 11px; color: #28a745; font-weight: bold; margin-top: 2px;">Total: ${escapeHtml(grandTotal)}</div>` : ''}
@@ -1348,6 +1486,16 @@ async function loadInvoice(id) {
     document.getElementById("a4").outerHTML = data.data;
     currentInvoiceId = data.id;
     currentFileName = data.name;
+    window.currentLoadedBillItems = data.bill_items || "";
+
+    const payEl = document.getElementById("paymentMode");
+    if (payEl) {
+        const modeText = payEl.innerText.trim().toUpperCase();
+        const sel = document.getElementById("posPaymentMethod");
+        if (sel) {
+            sel.value = (modeText.includes("ONLINE") || modeText.includes("UPI")) ? "Online" : "Cash";
+        }
+    }
 
     // Clean out any legacy non-print elements/trash icons inside table
     const a4 = document.getElementById("a4");
