@@ -292,6 +292,7 @@ body {
     <button onclick="window.location.href='/'" class="primary-btn">Invoice Billing</button>
     <button class="primary-btn" style="background-color: #6c757d; margin-left: 5px; cursor: default;" disabled>Inventory Management</button>
     <button onclick="window.location.href='/history'" class="primary-btn" style="background-color: #17a2b8; margin-left: 5px;">History</button>
+    <button onclick="window.location.href='/logout'" class="primary-btn" style="background-color: #dc3545; margin-left: 5px;">Logout</button>
 </div>
 
 <div class="app-layout">
@@ -580,7 +581,8 @@ function updateDashboardMetrics() {
         grandMonthlyProfit += ((sellingPrice - costPrice) * mSold);
     });
 
-    document.getElementById("metric-total-products").textContent = allProducts.length;
+    const totalStockQty = allProducts.reduce((sum, p) => sum + (p.purchase_qty || 0), 0);
+    document.getElementById("metric-total-products").textContent = totalStockQty;
     document.getElementById("metric-total-cost-price").textContent = "₹ " + grandCostPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById("metric-total-selling-price").textContent = "₹ " + grandSellingPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById("metric-total-sold").textContent = totalSold;

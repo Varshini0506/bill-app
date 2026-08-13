@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect
 import os
 import threading
 import sys
@@ -33,6 +33,7 @@ app = Flask(
     template_folder=resource_path("templates"),
     static_folder=resource_path("static")
 )
+app.secret_key = os.urandom(24)
 
 # =============================
 # Global Exception Handler
@@ -89,6 +90,34 @@ def parse_gst_float(gst_val):
         return float(gst_str)
     except Exception:
         return 5.0
+
+def format_date_for_db(date_val):
+    if not date_val or not str(date_val).strip():
+        return None
+    d_str = str(date_val).strip()
+    m1 = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', d_str)
+    if m1:
+        day, month, year = m1.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    m2 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', d_str)
+    if m2:
+        year, month, day = m2.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    return d_str
+
+def format_date_for_ui(date_val):
+    if not date_val or not str(date_val).strip():
+        return ""
+    d_str = str(date_val).strip()
+    m1 = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', d_str)
+    if m1:
+        year, month, day = m1.groups()
+        return f"{int(day):02d}-{int(month):02d}-{year}"
+    m2 = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', d_str)
+    if m2:
+        day, month, year = m2.groups()
+        return f"{int(day):02d}-{int(month):02d}-{year}"
+    return d_str
 
 def extract_customer_info(html_data):
     cust_name = ""
@@ -162,7 +191,7 @@ def load_products():
                     p_name = str(row["product_name"] or "")
                     p_qty = int(row["purchase_quantity"]) if row["purchase_quantity"] is not None else 0
                     s_qty = int(row["sold_quantity"]) if row["sold_quantity"] is not None else 0
-                    p_date = str(row["purchase_date"]) if row["purchase_date"] is not None else ""
+                    p_date = format_date_for_ui(row["purchase_date"]) if row["purchase_date"] is not None else ""
                     
                     u_price = float(row["unit_price"]) if row["unit_price"] is not None else None
                     c_price = float(row["cost_price"]) if row["cost_price"] is not None else 0.0
@@ -201,7 +230,7 @@ def load_products():
 def save_product_db(name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0, gst="5%"):
     product_id = str(int(time.time() * 1000))
     gst_float = parse_gst_float(gst)
-    p_date = purchase_date if (purchase_date and purchase_date.strip()) else None
+    p_date = format_date_for_db(purchase_date)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -223,7 +252,7 @@ def save_product_db(name, purchase_qty, sold_qty, purchase_date, unit_price, not
 
 def update_product_db(product_id, name, purchase_qty, sold_qty, purchase_date, unit_price, notes, cost_price=0.0, gst="5%"):
     gst_float = parse_gst_float(gst)
-    p_date = purchase_date if (purchase_date and purchase_date.strip()) else None
+    p_date = format_date_for_db(purchase_date)
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -389,9 +418,54 @@ def load_invoices():
 # Routes
 # =============================
 
+@app.before_request
+def require_login():
+    allowed_routes = ["login", "index", "static"]
+    if request.endpoint and request.endpoint not in allowed_routes:
+        if not session.get("logged_in"):
+            if request.path.startswith("/get-") or request.is_json:
+                return jsonify({"success": False, "error": "Unauthorized"}), 401
+            return redirect("/")
+
 @app.route("/")
 def index():
+    if session.get("logged_in"):
+        return redirect("/billing")
+    return render_template("login.html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form
+        username = data.get("username", "").strip() if data else ""
+        password = data.get("password", "").strip() if data else ""
+        if username == "Hari" and password == "Uma123":
+            session["logged_in"] = True
+            if request.is_json:
+                return jsonify({"success": True, "redirect": "/billing"})
+            return redirect("/billing")
+        else:
+            if request.is_json:
+                return jsonify({"success": False, "error": "Invalid username or password"}), 401
+            return render_template("login.html", error="Invalid username or password")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+@app.route("/billing")
+def billing_page():
+    if not session.get("logged_in"):
+        return redirect("/")
     return render_template("index.html")
+
+@app.route("/viewer")
+def viewer_page():
+    if not session.get("logged_in"):
+        return redirect("/")
+    return render_template("viewer.html")
 
 # Get all invoices (sidebar)
 @app.route("/get-invoices")
@@ -742,6 +816,8 @@ def delete_invoice():
 
 @app.route("/inventory")
 def inventory_page():
+    if not session.get("logged_in"):
+        return redirect("/")
     return render_template("inventory.html")
 
 @app.route("/get-products")
@@ -845,6 +921,8 @@ def delete_product_route():
 
 @app.route("/history")
 def history_page():
+    if not session.get("logged_in"):
+        return redirect("/")
     return render_template("history.html")
 
 @app.route("/get-history-data")
@@ -1003,15 +1081,24 @@ def get_history_data():
 # Start Flask Server
 # =============================
 def start_flask():
+    port = int(os.environ.get("PORT", 5001))
     app.run(
-        host="127.0.0.1",
-        port=5000,
+        host="0.0.0.0",
+        port=port,
         debug=False
     )
 
 def open_browser():
-    webbrowser.open("http://127.0.0.1:5000/")
+    webbrowser.open("http://127.0.0.1:5001/")
 
 if __name__ == "__main__":
-    threading.Timer(1.5, open_browser).start()
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5001))
+
+    if not os.environ.get("RENDER"):
+        threading.Timer(1.5, open_browser).start()
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
