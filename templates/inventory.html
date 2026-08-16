@@ -238,6 +238,16 @@ body {
     text-transform: uppercase;
 }
 
+.low-stock-badge-critical {
+    background-color: #dc3545 !important;
+    color: #ffffff !important;
+}
+
+.low-stock-badge-critical {
+    background-color: #dc3545 !important;
+    color: #ffffff !important;
+}
+
 .actions-cell {
     display: flex;
     gap: 5px;
@@ -488,8 +498,9 @@ function applyFiltersAndRender() {
             const dateB = parseDate(b.purchase_date);
             return sortValue === "date_desc" ? dateB - dateA : dateA - dateB;
         } else if (sortValue === "remaining_asc" || sortValue === "remaining_desc") {
-            const remA = a.purchase_qty - a.sold_qty;
-            const remB = b.purchase_qty - b.sold_qty;
+            const getRem = p => Math.max(0, (p.purchase_qty || 0) - Math.max(p.sold_qty || 0, p.monthly_sold || 0));
+            const remA = getRem(a);
+            const remB = getRem(b);
             return sortValue === "remaining_asc" ? remA - remB : remB - remA;
         }
         return 0;
@@ -506,10 +517,16 @@ function applyFiltersAndRender() {
     }
 
     filtered.forEach(p => {
-        const remaining = p.purchase_qty - p.sold_qty;
-        const isLowStock = remaining < 10;
+        const totalSoldQty = Math.max(p.sold_qty || 0, p.monthly_sold || 0);
+        const remaining = Math.max(0, (p.purchase_qty || 0) - totalSoldQty);
+        const isLowStock = remaining <= 10;
         const rowClass = isLowStock ? 'low-stock-row' : '';
-        const badge = isLowStock ? '<span class="low-stock-badge">Low Stock</span>' : '';
+        let badge = '';
+        if (remaining <= 3) {
+            badge = '<span class="low-stock-badge low-stock-badge-critical">LOW STOCK</span>';
+        } else if (remaining <= 10) {
+            badge = '<span class="low-stock-badge">LOW STOCK</span>';
+        }
         
         const costPriceVal = p.cost_price !== null && p.cost_price !== undefined ? parseFloat(p.cost_price) : 0;
         const formattedCostPrice = `₹ ${costPriceVal.toFixed(2)}`;
@@ -535,7 +552,7 @@ function applyFiltersAndRender() {
             <td style="text-align: right; color: #555;">${formattedCostPrice}</td>
             <td style="font-weight: bold; text-align: right; color: #005703;">${formattedSellingPrice}</td>
             <td style="font-weight: bold; text-align: right; color: #007bff;">${escapeHtml(gstDisplay)}</td>
-            <td style="text-align: right;">${p.purchase_qty} ${badge}</td>
+            <td style="text-align: right;">${remaining} ${badge}</td>
             <td style="font-weight: bold; text-align: right; color: #e65100;">${monthlySold}</td>
             <td style="font-weight: bold; text-align: right; color: ${monthlyProfit >= 0 ? '#28a745' : '#dc3545'};">${formattedMonthlyProfit}</td>
             <td class="actions-cell" style="justify-content: center;">
@@ -568,8 +585,9 @@ function updateDashboardMetrics() {
     let grandMonthlyProfit = 0;
 
     allProducts.forEach(p => {
-        totalSold += p.sold_qty;
-        const avail = (p.purchase_qty - p.sold_qty);
+        const totalSoldQty = Math.max(p.sold_qty || 0, p.monthly_sold || 0);
+        totalSold += totalSoldQty;
+        const avail = Math.max(0, (p.purchase_qty || 0) - totalSoldQty);
         const sellingPrice = p.unit_price !== null && p.unit_price !== undefined ? parseFloat(p.unit_price) : 0;
         const costPrice = p.cost_price !== null && p.cost_price !== undefined ? parseFloat(p.cost_price) : 0;
 
@@ -581,7 +599,10 @@ function updateDashboardMetrics() {
         grandMonthlyProfit += ((sellingPrice - costPrice) * mSold);
     });
 
-    const totalStockQty = allProducts.reduce((sum, p) => sum + (p.purchase_qty || 0), 0);
+    const totalStockQty = allProducts.reduce((sum, p) => {
+        const totalSoldQty = Math.max(p.sold_qty || 0, p.monthly_sold || 0);
+        return sum + Math.max(0, (p.purchase_qty || 0) - totalSoldQty);
+    }, 0);
     document.getElementById("metric-total-products").textContent = totalStockQty;
     document.getElementById("metric-total-cost-price").textContent = "₹ " + grandCostPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById("metric-total-selling-price").textContent = "₹ " + grandSellingPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

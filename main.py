@@ -439,7 +439,7 @@ def login():
         data = request.get_json(silent=True) or request.form
         username = data.get("username", "").strip() if data else ""
         password = data.get("password", "").strip() if data else ""
-        if username == "Hari" and password == "Uma123":
+        if username == "Hari" and password == "Uma@1999":
             session["logged_in"] = True
             if request.is_json:
                 return jsonify({"success": True, "redirect": "/billing"})
